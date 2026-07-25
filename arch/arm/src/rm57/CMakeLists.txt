@@ -35,4 +35,12 @@ if(NOT CONFIG_SCHED_TICKLESS)
   list(APPEND SRCS rm57_timerisr.c)
 endif()
 
+if(CONFIG_RM57_DMA)
+  list(APPEND SRCS rm57_dma.c)
+endif()
+
+if(CONFIG_RM57_LIN)
+  list(APPEND SRCS rm57_lin.c)
+endif()
+
 target_sources(arch PRIVATE ${SRCS})

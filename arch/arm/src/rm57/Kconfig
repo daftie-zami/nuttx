@@ -23,10 +23,110 @@ endchoice # TI Hercules RM57 Chip Selection
 menu "RM57 Peripheral Support"
 
 config RM57_SCI1
-	bool "Serial Communication Interface 1 (SCI1)"
+	bool "Serial Communication Interface 1 (SCI1/LIN1, SCI-compatibility mode)"
 	default n
 	select SCI1_SERIALDRIVER
 	select ARCH_HAVE_SERIAL_TERMIOS
+
+config RM57_SCI2
+	bool "Serial Communication Interface 2 (SCI2/LIN2, SCI-compatibility mode)"
+	default n
+	select SCI2_SERIALDRIVER
+	select ARCH_HAVE_SERIAL_TERMIOS
+
+config RM57_SCI3
+	bool "Serial Communication Interface 3 (SCI3)"
+	default n
+	select SCI3_SERIALDRIVER
+	select ARCH_HAVE_SERIAL_TERMIOS
+
+config RM57_SCI4
+	bool "Serial Communication Interface 4 (SCI4)"
+	default n
+	select SCI4_SERIALDRIVER
+	select ARCH_HAVE_SERIAL_TERMIOS
+
+config RM57_DMA
+	bool "DMA controller (32-channel, 48 request lines)"
+	default n
+	---help---
+		Enable the general-purpose DMA controller driver. Required by the
+		RM57_SCIn_RXDMA/TXDMA serial DMA options.
+
+config RM57_SCI1_RXDMA
+	bool "SCI1/LIN1 receive DMA"
+	default n
+	depends on RM57_SCI1 && RM57_DMA
+	select SERIAL_RXDMA
+
+config RM57_SCI1_TXDMA
+	bool "SCI1/LIN1 transmit DMA"
+	default n
+	depends on RM57_SCI1 && RM57_DMA
+	select SERIAL_TXDMA
+
+config RM57_SCI2_RXDMA
+	bool "SCI2/LIN2 receive DMA"
+	default n
+	depends on RM57_SCI2 && RM57_DMA
+	select SERIAL_RXDMA
+
+config RM57_SCI2_TXDMA
+	bool "SCI2/LIN2 transmit DMA"
+	default n
+	depends on RM57_SCI2 && RM57_DMA
+	select SERIAL_TXDMA
+
+config RM57_SCI3_RXDMA
+	bool "SCI3 receive DMA"
+	default n
+	depends on RM57_SCI3 && RM57_DMA
+	select SERIAL_RXDMA
+
+config RM57_SCI3_TXDMA
+	bool "SCI3 transmit DMA"
+	default n
+	depends on RM57_SCI3 && RM57_DMA
+	select SERIAL_TXDMA
+
+config RM57_SCI4_RXDMA
+	bool "SCI4 receive DMA"
+	default n
+	depends on RM57_SCI4 && RM57_DMA
+	select SERIAL_RXDMA
+
+config RM57_SCI4_TXDMA
+	bool "SCI4 transmit DMA"
+	default n
+	depends on RM57_SCI4 && RM57_DMA
+	select SERIAL_TXDMA
+
+config RM57_LIN
+	bool "LIN 2.x driver scaffold (LIN1/LIN2 modules)"
+	default n
+	depends on EXPERIMENTAL
+	---help---
+		Configuration and polled transfer foundation for LIN-mode
+		operation of the SCI1/LIN1 and SCI2/LIN2 dual-role modules (see
+		rm57_lin.h). Not integrated with the serial upper half, and not
+		a complete LIN protocol stack - see rm57_lin.h for what is and
+		is not implemented.
+
+		A LIN module cannot be used simultaneously in SCI mode
+		(RM57_SCI1/RM57_SCI2) and LIN mode; this is a runtime choice,
+		not enforced here, since e.g. SCI1 could run in SCI mode while
+		SCI2/LIN2 runs in LIN mode.
+
+config RM57_SERIAL_RXDMA_BUFFER_SIZE
+	int "RX DMA buffer size"
+	default 64
+	depends on RM57_SCI1_RXDMA || RM57_SCI2_RXDMA || RM57_SCI3_RXDMA || \
+		RM57_SCI4_RXDMA
+	---help---
+		The DMA buffer size when using RX DMA. This buffer is used to
+		receive data on the SCI while waiting for the application to
+		claim it. Rounded up to a multiple of the 32-byte Cortex-R5
+		D-cache line size.
 
 endmenu # RM57 Peripheral Support
 

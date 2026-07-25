@@ -21,7 +21,10 @@
  ****************************************************************************/
 
 /* Adapted from tms570_lowputc.c, using RM57's SCI register layout
- * (hardware/rm57_sci.h). Only SCI1 is currently supported.
+ * (hardware/rm57_sci.h). Supports SCI1-SCI4; SCI1/LIN1 and SCI2/LIN2 are
+ * dual-role SCI/LIN modules, driven here in SCI-compatibility mode (the
+ * LIN_MODE and MBUF_MODE bits in GCR1 are never set by
+ * rm57_sci_configure()).
  */
 
 /****************************************************************************
@@ -47,7 +50,13 @@
  * Pre-processor Definitions
  ****************************************************************************/
 
-/* Select SCI parameters for the selected console */
+/* Select SCI parameters for the selected console. At most one of
+ * CONFIG_SCIn_SERIAL_CONSOLE will be set (see the "choice" in
+ * drivers/serial/Kconfig); if none is set, the board has no serial
+ * console (HAVE_SERIAL_CONSOLE stays undefined) rather than a build
+ * error, since a console is no longer mandatory now that SCI2-4 are
+ * available as plain /dev/ttySx devices.
+ */
 
 #if defined(CONFIG_SCI1_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI1)
 #  define RM57_CONSOLE_BASE     RM57_SCI1_BASE
@@ -56,8 +65,28 @@
 #  define RM57_CONSOLE_PARITY   0
 #  define RM57_CONSOLE_2STOP    CONFIG_SCI1_2STOP
 #  define HAVE_SERIAL_CONSOLE   1
+#elif defined(CONFIG_SCI2_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI2)
+#  define RM57_CONSOLE_BASE     RM57_SCI2_BASE
+#  define RM57_CONSOLE_BAUD     CONFIG_SCI2_BAUD
+#  define RM57_CONSOLE_BITS     8
+#  define RM57_CONSOLE_PARITY   0
+#  define RM57_CONSOLE_2STOP    CONFIG_SCI2_2STOP
+#  define HAVE_SERIAL_CONSOLE   1
+#elif defined(CONFIG_SCI3_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI3)
+#  define RM57_CONSOLE_BASE     RM57_SCI3_BASE
+#  define RM57_CONSOLE_BAUD     CONFIG_SCI3_BAUD
+#  define RM57_CONSOLE_BITS     8
+#  define RM57_CONSOLE_PARITY   0
+#  define RM57_CONSOLE_2STOP    CONFIG_SCI3_2STOP
+#  define HAVE_SERIAL_CONSOLE   1
+#elif defined(CONFIG_SCI4_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI4)
+#  define RM57_CONSOLE_BASE     RM57_SCI4_BASE
+#  define RM57_CONSOLE_BAUD     CONFIG_SCI4_BAUD
+#  define RM57_CONSOLE_BITS     8
+#  define RM57_CONSOLE_PARITY   0
+#  define RM57_CONSOLE_2STOP    CONFIG_SCI4_2STOP
+#  define HAVE_SERIAL_CONSOLE   1
 #else
-#  error "No CONFIG_SCIn_SERIAL_CONSOLE Setting"
 #  undef HAVE_SERIAL_CONSOLE
 #endif
 
@@ -187,6 +216,18 @@ void rm57_lowsetup(void)
 {
 #ifdef CONFIG_RM57_SCI1
   rm57_sci_initialize(RM57_SCI1_BASE);
+#endif
+
+#ifdef CONFIG_RM57_SCI2
+  rm57_sci_initialize(RM57_SCI2_BASE);
+#endif
+
+#ifdef CONFIG_RM57_SCI3
+  rm57_sci_initialize(RM57_SCI3_BASE);
+#endif
+
+#ifdef CONFIG_RM57_SCI4
+  rm57_sci_initialize(RM57_SCI4_BASE);
 #endif
 
 #if defined(HAVE_SERIAL_CONSOLE) && !defined(CONFIG_SUPPRESS_SCI_CONFIG)

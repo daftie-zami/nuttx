@@ -35,6 +35,14 @@ ifneq ($(CONFIG_SCHED_TICKLESS),y)
 CHIP_CSRCS += rm57_timerisr.c
 endif
 
+ifeq ($(CONFIG_RM57_DMA),y)
+CHIP_CSRCS += rm57_dma.c
+endif
+
+ifeq ($(CONFIG_RM57_LIN),y)
+CHIP_CSRCS += rm57_lin.c
+endif
+
 # RM57 has no GIC - it uses the classic Hercules VIM interrupt controller
 
 CMN_CSRCS := $(filter-out arm_gicv2.c arm_gicv2_dump.c, $(CMN_CSRCS))
