@@ -29,6 +29,7 @@ set(SRCS
     rm57_lowputc.c
     rm57_serial.c
     rm57_esm.c
+    rm57_iomm.c
     rm57_coreinit.S)
 
 if(NOT CONFIG_SCHED_TICKLESS)
