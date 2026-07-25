@@ -20,8 +20,30 @@
  *
  ****************************************************************************/
 
-/* Adapted from tms570_serial.c, using RM57's SCI register layout. Only
- * SCI1/LIN1 is currently supported.
+/* Adapted from tms570_serial.c, using RM57's SCI register layout.
+ * Supports SCI1-SCI4. Lower-half operations use the `up_` prefix rather
+ * than `rm57_`, matching the convention used by e.g. stm32h7's
+ * stm32_serial.c, since these are arch-private callback implementations
+ * of the common serial upper half's uart_ops_s vtable rather than public
+ * RM57 API entry points (those - rm57_lowsetup(), rm57_sci_configure() -
+ * keep the `rm57_` prefix and live in rm57_lowputc.c).
+ *
+ * SCI1/LIN1 and SCI2/LIN2 are dual-role SCI/LIN modules; this driver
+ * always runs them in SCI-compatibility mode (GCR1 LIN_MODE=0,
+ * MBUF_MODE=0), which is why every DMA/interrupt request in this file is
+ * generated on a byte-per-byte basis (TRM SPNU562A 28.2.3) rather than
+ * the multi-buffered response DMA used by full LIN mode. SCI3/SCI4 are
+ * SCI-only and behave identically in this mode.
+ *
+ * DMA support (CONFIG_RM57_SCIn_RXDMA/TXDMA) follows the pattern used by
+ * stm32h7's stm32_serial.c: up to four uart_ops_s tables (no-DMA,
+ * RX-only, TX-only, RX+TX), a circular RX buffer drained via
+ * rm57_dmaresidual(), and one-shot TX transfers kicked off by
+ * uart_xmitchars_dma(). See TRM 28.2.3 for the SCI-side DMA request
+ * semantics this depends on: with MBUF_MODE=0, a DMA request is
+ * generated for every single byte, so the DMA channel's "block" is
+ * simply the RX ring buffer / TX chunk, transferred one byte (one frame,
+ * TTYPE=0) per hardware request.
  */
 
 /****************************************************************************
@@ -52,7 +74,9 @@
 
 #include "arm_internal.h"
 #include "hardware/rm57_sci.h"
+#include "hardware/rm57_dma.h"
 #include "rm57_lowputc.h"
+#include "rm57_dma.h"
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -60,69 +84,380 @@
 
 #ifdef USE_SERIALDRIVER
 
-/* Which SCI will be tty0/console? */
+/* Which SCI will be console, ttyS0, ttyS1, ttyS2, ttyS3? The console (if
+ * any) takes priority; remaining enabled SCIs are then assigned to
+ * ttyS0..ttyS3 in SCI1..SCI4 order. This is the same SCIn_ASSIGNED-guard
+ * ladder idiom used throughout NuttX's other multi-UART serial drivers
+ * (e.g. stm32h7's stm32_serial.c).
+ */
+
+/* Console */
 
 #if defined(CONFIG_SCI1_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI1)
-#  define CONSOLE_DEV           g_sci1port  /* SCI1 is console */
-#  define TTYS0_DEV             g_sci1port  /* SCI1 is ttyS0 */
+#  define CONSOLE_DEV     g_sci1priv.dev
+#  define SCI1_ASSIGNED   1
+#elif defined(CONFIG_SCI2_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI2)
+#  define CONSOLE_DEV     g_sci2priv.dev
+#  define SCI2_ASSIGNED   1
+#elif defined(CONFIG_SCI3_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI3)
+#  define CONSOLE_DEV     g_sci3priv.dev
+#  define SCI3_ASSIGNED   1
+#elif defined(CONFIG_SCI4_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI4)
+#  define CONSOLE_DEV     g_sci4priv.dev
+#  define SCI4_ASSIGNED   1
 #else
-#  undef CONSOLE_DEV                        /* No console */
-#  if defined(CONFIG_RM57_SCI1)
-#    define TTYS0_DEV           g_sci1port  /* SCI1 is ttyS0 */
-#  endif
+#  undef CONSOLE_DEV
+#endif
+
+/* ttyS0 */
+
+#if defined(CONFIG_RM57_SCI1) && !defined(SCI1_ASSIGNED)
+#  define TTYS0_DEV       g_sci1priv.dev
+#  define SCI1_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI2) && !defined(SCI2_ASSIGNED)
+#  define TTYS0_DEV       g_sci2priv.dev
+#  define SCI2_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI3) && !defined(SCI3_ASSIGNED)
+#  define TTYS0_DEV       g_sci3priv.dev
+#  define SCI3_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI4) && !defined(SCI4_ASSIGNED)
+#  define TTYS0_DEV       g_sci4priv.dev
+#  define SCI4_ASSIGNED   1
+#endif
+
+/* ttyS1 */
+
+#if defined(CONFIG_RM57_SCI1) && !defined(SCI1_ASSIGNED)
+#  define TTYS1_DEV       g_sci1priv.dev
+#  define SCI1_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI2) && !defined(SCI2_ASSIGNED)
+#  define TTYS1_DEV       g_sci2priv.dev
+#  define SCI2_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI3) && !defined(SCI3_ASSIGNED)
+#  define TTYS1_DEV       g_sci3priv.dev
+#  define SCI3_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI4) && !defined(SCI4_ASSIGNED)
+#  define TTYS1_DEV       g_sci4priv.dev
+#  define SCI4_ASSIGNED   1
+#endif
+
+/* ttyS2 */
+
+#if defined(CONFIG_RM57_SCI1) && !defined(SCI1_ASSIGNED)
+#  define TTYS2_DEV       g_sci1priv.dev
+#  define SCI1_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI2) && !defined(SCI2_ASSIGNED)
+#  define TTYS2_DEV       g_sci2priv.dev
+#  define SCI2_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI3) && !defined(SCI3_ASSIGNED)
+#  define TTYS2_DEV       g_sci3priv.dev
+#  define SCI3_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI4) && !defined(SCI4_ASSIGNED)
+#  define TTYS2_DEV       g_sci4priv.dev
+#  define SCI4_ASSIGNED   1
+#endif
+
+/* ttyS3 */
+
+#if defined(CONFIG_RM57_SCI1) && !defined(SCI1_ASSIGNED)
+#  define TTYS3_DEV       g_sci1priv.dev
+#  define SCI1_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI2) && !defined(SCI2_ASSIGNED)
+#  define TTYS3_DEV       g_sci2priv.dev
+#  define SCI2_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI3) && !defined(SCI3_ASSIGNED)
+#  define TTYS3_DEV       g_sci3priv.dev
+#  define SCI3_ASSIGNED   1
+#elif defined(CONFIG_RM57_SCI4) && !defined(SCI4_ASSIGNED)
+#  define TTYS3_DEV       g_sci4priv.dev
+#  define SCI4_ASSIGNED   1
+#endif
+
+/* Is RX/TX DMA available on any (enabled) SCI? */
+
+#undef SERIAL_HAVE_RXDMA
+#if defined(CONFIG_RM57_SCI1_RXDMA) || defined(CONFIG_RM57_SCI2_RXDMA) || \
+    defined(CONFIG_RM57_SCI3_RXDMA) || defined(CONFIG_RM57_SCI4_RXDMA)
+#  define SERIAL_HAVE_RXDMA 1
+#endif
+
+#undef SERIAL_HAVE_TXDMA
+#if defined(CONFIG_RM57_SCI1_TXDMA) || defined(CONFIG_RM57_SCI2_TXDMA) || \
+    defined(CONFIG_RM57_SCI3_TXDMA) || defined(CONFIG_RM57_SCI4_TXDMA)
+#  define SERIAL_HAVE_TXDMA 1
+#endif
+
+/* Is RX/TX DMA used on the console SCI? */
+
+#undef SERIAL_HAVE_CONSOLE_RXDMA
+#if defined(CONFIG_SCI1_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI1_RXDMA)
+#  define SERIAL_HAVE_CONSOLE_RXDMA 1
+#elif defined(CONFIG_SCI2_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI2_RXDMA)
+#  define SERIAL_HAVE_CONSOLE_RXDMA 1
+#elif defined(CONFIG_SCI3_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI3_RXDMA)
+#  define SERIAL_HAVE_CONSOLE_RXDMA 1
+#elif defined(CONFIG_SCI4_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI4_RXDMA)
+#  define SERIAL_HAVE_CONSOLE_RXDMA 1
+#endif
+
+#undef SERIAL_HAVE_CONSOLE_TXDMA
+#if defined(CONFIG_SCI1_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI1_TXDMA)
+#  define SERIAL_HAVE_CONSOLE_TXDMA 1
+#elif defined(CONFIG_SCI2_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI2_TXDMA)
+#  define SERIAL_HAVE_CONSOLE_TXDMA 1
+#elif defined(CONFIG_SCI3_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI3_TXDMA)
+#  define SERIAL_HAVE_CONSOLE_TXDMA 1
+#elif defined(CONFIG_SCI4_SERIAL_CONSOLE) && defined(CONFIG_RM57_SCI4_TXDMA)
+#  define SERIAL_HAVE_CONSOLE_TXDMA 1
+#endif
+
+/* Which of the (up to) four uart_ops_s tables are actually needed? */
+
+#undef SERIAL_HAVE_NODMA_OPS
+#if defined(CONFIG_RM57_SCI1) && !defined(CONFIG_RM57_SCI1_RXDMA) && \
+    !defined(CONFIG_RM57_SCI1_TXDMA)
+#  define SERIAL_HAVE_NODMA_OPS 1
+#elif defined(CONFIG_RM57_SCI2) && !defined(CONFIG_RM57_SCI2_RXDMA) && \
+    !defined(CONFIG_RM57_SCI2_TXDMA)
+#  define SERIAL_HAVE_NODMA_OPS 1
+#elif defined(CONFIG_RM57_SCI3) && !defined(CONFIG_RM57_SCI3_RXDMA) && \
+    !defined(CONFIG_RM57_SCI3_TXDMA)
+#  define SERIAL_HAVE_NODMA_OPS 1
+#elif defined(CONFIG_RM57_SCI4) && !defined(CONFIG_RM57_SCI4_RXDMA) && \
+    !defined(CONFIG_RM57_SCI4_TXDMA)
+#  define SERIAL_HAVE_NODMA_OPS 1
+#endif
+
+#undef SERIAL_HAVE_RXTXDMA_OPS
+#if defined(CONFIG_RM57_SCI1_RXDMA) && defined(CONFIG_RM57_SCI1_TXDMA)
+#  define SERIAL_HAVE_RXTXDMA_OPS 1
+#elif defined(CONFIG_RM57_SCI2_RXDMA) && defined(CONFIG_RM57_SCI2_TXDMA)
+#  define SERIAL_HAVE_RXTXDMA_OPS 1
+#elif defined(CONFIG_RM57_SCI3_RXDMA) && defined(CONFIG_RM57_SCI3_TXDMA)
+#  define SERIAL_HAVE_RXTXDMA_OPS 1
+#elif defined(CONFIG_RM57_SCI4_RXDMA) && defined(CONFIG_RM57_SCI4_TXDMA)
+#  define SERIAL_HAVE_RXTXDMA_OPS 1
+#endif
+
+#undef SERIAL_HAVE_RXDMA_OPS
+#if defined(CONFIG_RM57_SCI1_RXDMA) && !defined(CONFIG_RM57_SCI1_TXDMA)
+#  define SERIAL_HAVE_RXDMA_OPS 1
+#elif defined(CONFIG_RM57_SCI2_RXDMA) && !defined(CONFIG_RM57_SCI2_TXDMA)
+#  define SERIAL_HAVE_RXDMA_OPS 1
+#elif defined(CONFIG_RM57_SCI3_RXDMA) && !defined(CONFIG_RM57_SCI3_TXDMA)
+#  define SERIAL_HAVE_RXDMA_OPS 1
+#elif defined(CONFIG_RM57_SCI4_RXDMA) && !defined(CONFIG_RM57_SCI4_TXDMA)
+#  define SERIAL_HAVE_RXDMA_OPS 1
+#endif
+
+#undef SERIAL_HAVE_TXDMA_OPS
+#if !defined(CONFIG_RM57_SCI1_RXDMA) && defined(CONFIG_RM57_SCI1_TXDMA)
+#  define SERIAL_HAVE_TXDMA_OPS 1
+#elif !defined(CONFIG_RM57_SCI2_RXDMA) && defined(CONFIG_RM57_SCI2_TXDMA)
+#  define SERIAL_HAVE_TXDMA_OPS 1
+#elif !defined(CONFIG_RM57_SCI3_RXDMA) && defined(CONFIG_RM57_SCI3_TXDMA)
+#  define SERIAL_HAVE_TXDMA_OPS 1
+#elif !defined(CONFIG_RM57_SCI4_RXDMA) && defined(CONFIG_RM57_SCI4_TXDMA)
+#  define SERIAL_HAVE_TXDMA_OPS 1
+#endif
+
+/* Sentinel for a port's [rt]xdma_req field when that direction's DMA is
+ * not configured for it (the struct field still exists whenever *any*
+ * port in the file uses that direction of DMA).
+ */
+
+#define RM57_DMA_NOREQ ((unsigned int)-1)
+
+#ifdef SERIAL_HAVE_RXDMA
+/* The Cortex-R5 D-cache line size on this device is 32 bytes; the RX DMA
+ * buffer must be a multiple of, and aligned to, that size so that
+ * up_invalidate_dcache() calls on sub-ranges of it never touch a byte
+ * shared with unrelated data.
+ */
+
+#  define RXDMA_BUFFER_MASK  31
+#  define RXDMA_BUFFER_SIZE  ((CONFIG_RM57_SERIAL_RXDMA_BUFFER_SIZE + \
+                               RXDMA_BUFFER_MASK) & ~RXDMA_BUFFER_MASK)
 #endif
 
 /****************************************************************************
  * Private Types
  ****************************************************************************/
 
-struct rm57_dev_s
+struct up_dev_s
 {
-  const uint32_t scibase;       /* Base address of SCI registers */
-  struct sci_config_s config;   /* SCI configuration */
-  uint8_t irq;                  /* IRQ associated with this SCI */
+  struct uart_dev_s dev;         /* Generic UART device state */
+  const uint32_t scibase;        /* Base address of SCI registers */
+  struct sci_config_s config;    /* SCI configuration */
+  const uint8_t irq;             /* IRQ associated with this SCI */
+
+#ifdef SERIAL_HAVE_TXDMA
+  const unsigned int txdma_req;  /* DMA request line, or RM57_DMA_NOREQ */
+  DMA_HANDLE txdma;               /* Currently-open transmit DMA channel */
+#endif
+
+#ifdef SERIAL_HAVE_RXDMA
+  const unsigned int rxdma_req;  /* DMA request line, or RM57_DMA_NOREQ */
+  DMA_HANDLE rxdma;               /* Currently-open receive DMA channel */
+  bool rxenable;                  /* DMA-based reception en/disable */
+  uint32_t rxdmanext;             /* Next byte in the DMA buffer to read */
+  uint32_t rxdmaavail;            /* Bytes available without invalidating
+                                    * the D-cache */
+  char *const rxfifo;             /* Receive DMA buffer */
+#endif
 };
 
 /****************************************************************************
  * Private Function Prototypes
  ****************************************************************************/
 
-static int  rm57_setup(struct uart_dev_s *dev);
-static void rm57_shutdown(struct uart_dev_s *dev);
-static int  rm57_attach(struct uart_dev_s *dev);
-static void rm57_detach(struct uart_dev_s *dev);
-static int  rm57_interrupt(int irq, void *context, void *arg);
-static int  rm57_ioctl(struct file *filep, int cmd, unsigned long arg);
-static int  rm57_receive(struct uart_dev_s *dev, unsigned int *status);
-static void rm57_rxint(struct uart_dev_s *dev, bool enable);
-static bool rm57_rxavailable(struct uart_dev_s *dev);
-static void rm57_send(struct uart_dev_s *dev, int ch);
-static void rm57_txint(struct uart_dev_s *dev, bool enable);
-static bool rm57_txready(struct uart_dev_s *dev);
-static bool rm57_txempty(struct uart_dev_s *dev);
+static int  up_setup(struct uart_dev_s *dev);
+static void up_shutdown(struct uart_dev_s *dev);
+static int  up_attach(struct uart_dev_s *dev);
+static void up_detach(struct uart_dev_s *dev);
+static int  up_interrupt(int irq, void *context, void *arg);
+static int  up_ioctl(struct file *filep, int cmd, unsigned long arg);
+static int  up_receive(struct uart_dev_s *dev, unsigned int *status);
+static void up_rxint(struct uart_dev_s *dev, bool enable);
+static bool up_rxavailable(struct uart_dev_s *dev);
+static void up_send(struct uart_dev_s *dev, int ch);
+static void up_txint(struct uart_dev_s *dev, bool enable);
+static bool up_txready(struct uart_dev_s *dev);
+static bool up_txempty(struct uart_dev_s *dev);
+
+#ifdef SERIAL_HAVE_RXDMA
+static int  up_dma_nextrx(struct up_dev_s *priv);
+static int  up_dma_receive(struct uart_dev_s *dev, unsigned int *status);
+static void up_dma_rxint(struct uart_dev_s *dev, bool enable);
+static bool up_dma_rxavailable(struct uart_dev_s *dev);
+static void up_dma_rxcallback(DMA_HANDLE handle, uint8_t status,
+                               void *arg);
+#endif
+
+#ifdef SERIAL_HAVE_TXDMA
+static void up_dma_send(struct uart_dev_s *dev);
+static void up_dma_txint(struct uart_dev_s *dev, bool enable);
+static void up_dma_txavailable(struct uart_dev_s *dev);
+static void up_dma_txcallback(DMA_HANDLE handle, uint8_t status,
+                               void *arg);
+#endif
+
+#if defined(SERIAL_HAVE_RXDMA) || defined(SERIAL_HAVE_TXDMA)
+static int  up_dma_setup(struct uart_dev_s *dev);
+static void up_dma_shutdown(struct uart_dev_s *dev);
+#endif
 
 /****************************************************************************
  * Private Data
  ****************************************************************************/
 
+#ifdef SERIAL_HAVE_NODMA_OPS
 static const struct uart_ops_s g_sci_ops =
 {
-  .setup          = rm57_setup,
-  .shutdown       = rm57_shutdown,
-  .attach         = rm57_attach,
-  .detach         = rm57_detach,
-  .ioctl          = rm57_ioctl,
-  .receive        = rm57_receive,
-  .rxint          = rm57_rxint,
-  .rxavailable    = rm57_rxavailable,
+  .setup          = up_setup,
+  .shutdown       = up_shutdown,
+  .attach         = up_attach,
+  .detach         = up_detach,
+  .ioctl          = up_ioctl,
+  .receive        = up_receive,
+  .rxint          = up_rxint,
+  .rxavailable    = up_rxavailable,
 #ifdef CONFIG_SERIAL_IFLOWCONTROL
   .rxflowcontrol  = NULL,
 #endif
-  .send           = rm57_send,
-  .txint          = rm57_txint,
-  .txready        = rm57_txready,
-  .txempty        = rm57_txempty,
+  .send           = up_send,
+  .txint          = up_txint,
+  .txready        = up_txready,
+  .txempty        = up_txempty,
 };
+#endif
+
+#ifdef SERIAL_HAVE_RXTXDMA_OPS
+static const struct uart_ops_s g_sci_rxtxdma_ops =
+{
+  .setup          = up_dma_setup,
+  .shutdown       = up_dma_shutdown,
+  .attach         = up_attach,
+  .detach         = up_detach,
+  .ioctl          = up_ioctl,
+  .receive        = up_dma_receive,
+  .rxint          = up_dma_rxint,
+  .rxavailable    = up_dma_rxavailable,
+#ifdef CONFIG_SERIAL_IFLOWCONTROL
+  .rxflowcontrol  = NULL,
+#endif
+  .send           = up_send,
+  .txint          = up_dma_txint,
+  .txready        = up_txready,
+  .txempty        = up_txempty,
+  .dmatxavail     = up_dma_txavailable,
+  .dmasend        = up_dma_send,
+};
+#endif
+
+#ifdef SERIAL_HAVE_RXDMA_OPS
+static const struct uart_ops_s g_sci_rxdma_ops =
+{
+  .setup          = up_dma_setup,
+  .shutdown       = up_dma_shutdown,
+  .attach         = up_attach,
+  .detach         = up_detach,
+  .ioctl          = up_ioctl,
+  .receive        = up_dma_receive,
+  .rxint          = up_dma_rxint,
+  .rxavailable    = up_dma_rxavailable,
+#ifdef CONFIG_SERIAL_IFLOWCONTROL
+  .rxflowcontrol  = NULL,
+#endif
+  .send           = up_send,
+  .txint          = up_txint,
+  .txready        = up_txready,
+  .txempty        = up_txempty,
+};
+#endif
+
+#ifdef SERIAL_HAVE_TXDMA_OPS
+static const struct uart_ops_s g_sci_txdma_ops =
+{
+  .setup          = up_dma_setup,
+  .shutdown       = up_dma_shutdown,
+  .attach         = up_attach,
+  .detach         = up_detach,
+  .ioctl          = up_ioctl,
+  .receive        = up_receive,
+  .rxint          = up_rxint,
+  .rxavailable    = up_rxavailable,
+#ifdef CONFIG_SERIAL_IFLOWCONTROL
+  .rxflowcontrol  = NULL,
+#endif
+  .send           = up_send,
+  .txint          = up_dma_txint,
+  .txready        = up_txready,
+  .txempty        = up_txempty,
+  .dmatxavail     = up_dma_txavailable,
+  .dmasend        = up_dma_send,
+};
+#endif
+
+/* RX DMA buffers. Must be a multiple of, and aligned to, the D-cache line
+ * size (see RXDMA_BUFFER_SIZE above) and positioned in DMA-able memory.
+ */
+
+#ifdef CONFIG_RM57_SCI1_RXDMA
+static char g_sci1rxfifo[RXDMA_BUFFER_SIZE] aligned_data(32);
+#endif
+
+#ifdef CONFIG_RM57_SCI2_RXDMA
+static char g_sci2rxfifo[RXDMA_BUFFER_SIZE] aligned_data(32);
+#endif
+
+#ifdef CONFIG_RM57_SCI3_RXDMA
+static char g_sci3rxfifo[RXDMA_BUFFER_SIZE] aligned_data(32);
+#endif
+
+#ifdef CONFIG_RM57_SCI4_RXDMA
+static char g_sci4rxfifo[RXDMA_BUFFER_SIZE] aligned_data(32);
+#endif
 
 /* I/O buffers */
 
@@ -131,11 +466,49 @@ static char g_sci1rxbuffer[CONFIG_SCI1_RXBUFSIZE];
 static char g_sci1txbuffer[CONFIG_SCI1_TXBUFSIZE];
 #endif
 
-/* This describes the state of the SCI1 port. */
+#ifdef CONFIG_RM57_SCI2
+static char g_sci2rxbuffer[CONFIG_SCI2_RXBUFSIZE];
+static char g_sci2txbuffer[CONFIG_SCI2_TXBUFSIZE];
+#endif
+
+#ifdef CONFIG_RM57_SCI3
+static char g_sci3rxbuffer[CONFIG_SCI3_RXBUFSIZE];
+static char g_sci3txbuffer[CONFIG_SCI3_TXBUFSIZE];
+#endif
+
+#ifdef CONFIG_RM57_SCI4
+static char g_sci4rxbuffer[CONFIG_SCI4_RXBUFSIZE];
+static char g_sci4txbuffer[CONFIG_SCI4_TXBUFSIZE];
+#endif
+
+/* This describes the state of the SCI1/LIN1 port. */
 
 #ifdef CONFIG_RM57_SCI1
-static struct rm57_dev_s g_sci1priv =
+static struct up_dev_s g_sci1priv =
 {
+  .dev            =
+  {
+    .recv     =
+    {
+      .size   = CONFIG_SCI1_RXBUFSIZE,
+      .buffer = g_sci1rxbuffer,
+    },
+    .xmit     =
+    {
+      .size   = CONFIG_SCI1_TXBUFSIZE,
+      .buffer = g_sci1txbuffer,
+    },
+#if defined(CONFIG_RM57_SCI1_RXDMA) && defined(CONFIG_RM57_SCI1_TXDMA)
+    .ops      = &g_sci_rxtxdma_ops,
+#elif defined(CONFIG_RM57_SCI1_RXDMA) && !defined(CONFIG_RM57_SCI1_TXDMA)
+    .ops      = &g_sci_rxdma_ops,
+#elif !defined(CONFIG_RM57_SCI1_RXDMA) && defined(CONFIG_RM57_SCI1_TXDMA)
+    .ops      = &g_sci_txdma_ops,
+#else
+    .ops      = &g_sci_ops,
+#endif
+    .priv     = &g_sci1priv,
+  },
   .scibase        = RM57_SCI1_BASE,
   .config         =
   {
@@ -145,22 +518,190 @@ static struct rm57_dev_s g_sci1priv =
     .stopbits2    = CONFIG_SCI1_2STOP,
   },
   .irq            = RM57_REQ_LIN1HIGH,
+#ifdef SERIAL_HAVE_TXDMA
+#  ifdef CONFIG_RM57_SCI1_TXDMA
+  .txdma_req      = DMA_REQ_LIN1TX,
+#  else
+  .txdma_req      = RM57_DMA_NOREQ,
+#  endif
+#endif
+#ifdef SERIAL_HAVE_RXDMA
+#  ifdef CONFIG_RM57_SCI1_RXDMA
+  .rxdma_req      = DMA_REQ_LIN1RX,
+  .rxfifo         = g_sci1rxfifo,
+#  else
+  .rxdma_req      = RM57_DMA_NOREQ,
+  .rxfifo         = NULL,
+#  endif
+#endif
 };
+#endif
 
-static uart_dev_t g_sci1port =
+/* This describes the state of the SCI2/LIN2 port. */
+
+#ifdef CONFIG_RM57_SCI2
+static struct up_dev_s g_sci2priv =
 {
-  .recv     =
+  .dev            =
   {
-    .size   = CONFIG_SCI1_RXBUFSIZE,
-    .buffer = g_sci1rxbuffer,
+    .recv     =
+    {
+      .size   = CONFIG_SCI2_RXBUFSIZE,
+      .buffer = g_sci2rxbuffer,
+    },
+    .xmit     =
+    {
+      .size   = CONFIG_SCI2_TXBUFSIZE,
+      .buffer = g_sci2txbuffer,
+    },
+#if defined(CONFIG_RM57_SCI2_RXDMA) && defined(CONFIG_RM57_SCI2_TXDMA)
+    .ops      = &g_sci_rxtxdma_ops,
+#elif defined(CONFIG_RM57_SCI2_RXDMA) && !defined(CONFIG_RM57_SCI2_TXDMA)
+    .ops      = &g_sci_rxdma_ops,
+#elif !defined(CONFIG_RM57_SCI2_RXDMA) && defined(CONFIG_RM57_SCI2_TXDMA)
+    .ops      = &g_sci_txdma_ops,
+#else
+    .ops      = &g_sci_ops,
+#endif
+    .priv     = &g_sci2priv,
   },
-  .xmit     =
+  .scibase        = RM57_SCI2_BASE,
+  .config         =
   {
-    .size   = CONFIG_SCI1_TXBUFSIZE,
-    .buffer = g_sci1txbuffer,
+    .baud         = CONFIG_SCI2_BAUD,
+    .parity       = 0,
+    .bits         = 8,
+    .stopbits2    = CONFIG_SCI2_2STOP,
   },
-  .ops      = &g_sci_ops,
-  .priv     = &g_sci1priv,
+  .irq            = RM57_REQ_LIN2HIGH,
+#ifdef SERIAL_HAVE_TXDMA
+#  ifdef CONFIG_RM57_SCI2_TXDMA
+  .txdma_req      = DMA_REQ_LIN2TX,
+#  else
+  .txdma_req      = RM57_DMA_NOREQ,
+#  endif
+#endif
+#ifdef SERIAL_HAVE_RXDMA
+#  ifdef CONFIG_RM57_SCI2_RXDMA
+  .rxdma_req      = DMA_REQ_LIN2RX,
+  .rxfifo         = g_sci2rxfifo,
+#  else
+  .rxdma_req      = RM57_DMA_NOREQ,
+  .rxfifo         = NULL,
+#  endif
+#endif
+};
+#endif
+
+/* This describes the state of the SCI3 port. */
+
+#ifdef CONFIG_RM57_SCI3
+static struct up_dev_s g_sci3priv =
+{
+  .dev            =
+  {
+    .recv     =
+    {
+      .size   = CONFIG_SCI3_RXBUFSIZE,
+      .buffer = g_sci3rxbuffer,
+    },
+    .xmit     =
+    {
+      .size   = CONFIG_SCI3_TXBUFSIZE,
+      .buffer = g_sci3txbuffer,
+    },
+#if defined(CONFIG_RM57_SCI3_RXDMA) && defined(CONFIG_RM57_SCI3_TXDMA)
+    .ops      = &g_sci_rxtxdma_ops,
+#elif defined(CONFIG_RM57_SCI3_RXDMA) && !defined(CONFIG_RM57_SCI3_TXDMA)
+    .ops      = &g_sci_rxdma_ops,
+#elif !defined(CONFIG_RM57_SCI3_RXDMA) && defined(CONFIG_RM57_SCI3_TXDMA)
+    .ops      = &g_sci_txdma_ops,
+#else
+    .ops      = &g_sci_ops,
+#endif
+    .priv     = &g_sci3priv,
+  },
+  .scibase        = RM57_SCI3_BASE,
+  .config         =
+  {
+    .baud         = CONFIG_SCI3_BAUD,
+    .parity       = 0,
+    .bits         = 8,
+    .stopbits2    = CONFIG_SCI3_2STOP,
+  },
+  .irq            = RM57_REQ_SCI3HIGH,
+#ifdef SERIAL_HAVE_TXDMA
+#  ifdef CONFIG_RM57_SCI3_TXDMA
+  .txdma_req      = DMA_REQ_SCI3TX,
+#  else
+  .txdma_req      = RM57_DMA_NOREQ,
+#  endif
+#endif
+#ifdef SERIAL_HAVE_RXDMA
+#  ifdef CONFIG_RM57_SCI3_RXDMA
+  .rxdma_req      = DMA_REQ_SCI3RX,
+  .rxfifo         = g_sci3rxfifo,
+#  else
+  .rxdma_req      = RM57_DMA_NOREQ,
+  .rxfifo         = NULL,
+#  endif
+#endif
+};
+#endif
+
+/* This describes the state of the SCI4 port. */
+
+#ifdef CONFIG_RM57_SCI4
+static struct up_dev_s g_sci4priv =
+{
+  .dev            =
+  {
+    .recv     =
+    {
+      .size   = CONFIG_SCI4_RXBUFSIZE,
+      .buffer = g_sci4rxbuffer,
+    },
+    .xmit     =
+    {
+      .size   = CONFIG_SCI4_TXBUFSIZE,
+      .buffer = g_sci4txbuffer,
+    },
+#if defined(CONFIG_RM57_SCI4_RXDMA) && defined(CONFIG_RM57_SCI4_TXDMA)
+    .ops      = &g_sci_rxtxdma_ops,
+#elif defined(CONFIG_RM57_SCI4_RXDMA) && !defined(CONFIG_RM57_SCI4_TXDMA)
+    .ops      = &g_sci_rxdma_ops,
+#elif !defined(CONFIG_RM57_SCI4_RXDMA) && defined(CONFIG_RM57_SCI4_TXDMA)
+    .ops      = &g_sci_txdma_ops,
+#else
+    .ops      = &g_sci_ops,
+#endif
+    .priv     = &g_sci4priv,
+  },
+  .scibase        = RM57_SCI4_BASE,
+  .config         =
+  {
+    .baud         = CONFIG_SCI4_BAUD,
+    .parity       = 0,
+    .bits         = 8,
+    .stopbits2    = CONFIG_SCI4_2STOP,
+  },
+  .irq            = RM57_REQ_SCI4HIGH,
+#ifdef SERIAL_HAVE_TXDMA
+#  ifdef CONFIG_RM57_SCI4_TXDMA
+  .txdma_req      = DMA_REQ_SCI4TX,
+#  else
+  .txdma_req      = RM57_DMA_NOREQ,
+#  endif
+#endif
+#ifdef SERIAL_HAVE_RXDMA
+#  ifdef CONFIG_RM57_SCI4_RXDMA
+  .rxdma_req      = DMA_REQ_SCI4RX,
+  .rxfifo         = g_sci4rxfifo,
+#  else
+  .rxdma_req      = RM57_DMA_NOREQ,
+  .rxfifo         = NULL,
+#  endif
+#endif
 };
 #endif
 
@@ -169,39 +710,38 @@ static uart_dev_t g_sci1port =
  ****************************************************************************/
 
 /****************************************************************************
- * Name: rm57_serialin
+ * Name: up_serialin
  ****************************************************************************/
 
-static inline uint32_t rm57_serialin(struct rm57_dev_s *priv, int offset)
+static inline uint32_t up_serialin(struct up_dev_s *priv, int offset)
 {
   return getreg32(priv->scibase + offset);
 }
 
 /****************************************************************************
- * Name: rm57_serialout
+ * Name: up_serialout
  ****************************************************************************/
 
-static inline void rm57_serialout(struct rm57_dev_s *priv, int offset,
-                                   uint32_t value)
+static inline void up_serialout(struct up_dev_s *priv, int offset,
+                                 uint32_t value)
 {
   putreg32(value, priv->scibase + offset);
 }
 
 /****************************************************************************
- * Name: rm57_restoresciint
+ * Name: up_restoresciint
  ****************************************************************************/
 
-static inline void rm57_restoresciint(struct rm57_dev_s *priv,
-                                       uint32_t ints)
+static inline void up_restoresciint(struct up_dev_s *priv, uint32_t ints)
 {
-  rm57_serialout(priv, RM57_SCI_SETINT_OFFSET, ints);
+  up_serialout(priv, RM57_SCI_SETINT_OFFSET, ints);
 }
 
 /****************************************************************************
- * Name: rm57_disableallints
+ * Name: up_disableallints
  ****************************************************************************/
 
-static void rm57_disableallints(struct rm57_dev_s *priv, uint32_t *ints)
+static void up_disableallints(struct up_dev_s *priv, uint32_t *ints)
 {
   irqstate_t flags;
 
@@ -210,15 +750,15 @@ static void rm57_disableallints(struct rm57_dev_s *priv, uint32_t *ints)
   flags = enter_critical_section();
   if (ints)
     {
-      *ints = rm57_serialin(priv, RM57_SCI_SETINT_OFFSET);
+      *ints = up_serialin(priv, RM57_SCI_SETINT_OFFSET);
     }
 
-  rm57_serialout(priv, RM57_SCI_CLEARINT_OFFSET, SCI_INT_ALLINTS);
+  up_serialout(priv, RM57_SCI_CLEARINT_OFFSET, SCI_INT_ALLINTS);
   leave_critical_section(flags);
 }
 
 /****************************************************************************
- * Name: rm57_setup
+ * Name: up_setup
  *
  * Description:
  *   Configure the SCI baud, bits, parity, etc. This method is called the
@@ -226,10 +766,10 @@ static void rm57_disableallints(struct rm57_dev_s *priv, uint32_t *ints)
  *
  ****************************************************************************/
 
-static int rm57_setup(struct uart_dev_s *dev)
+static int up_setup(struct uart_dev_s *dev)
 {
 #ifndef CONFIG_SUPPRESS_SCI_CONFIG
-  struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
 
   return rm57_sci_configure(priv->scibase, &priv->config);
 #else
@@ -238,7 +778,7 @@ static int rm57_setup(struct uart_dev_s *dev)
 }
 
 /****************************************************************************
- * Name: rm57_shutdown
+ * Name: up_shutdown
  *
  * Description:
  *   Disable the SCI.  This method is called when the serial
@@ -246,16 +786,16 @@ static int rm57_setup(struct uart_dev_s *dev)
  *
  ****************************************************************************/
 
-static void rm57_shutdown(struct uart_dev_s *dev)
+static void up_shutdown(struct uart_dev_s *dev)
 {
-  struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
 
-  rm57_serialout(priv, RM57_SCI_GCR1_OFFSET, 0);
-  rm57_disableallints(priv, NULL);
+  up_serialout(priv, RM57_SCI_GCR1_OFFSET, 0);
+  up_disableallints(priv, NULL);
 }
 
 /****************************************************************************
- * Name: rm57_attach
+ * Name: up_attach
  *
  * Description:
  *   Configure the SCI to operate in interrupt driven mode.  This method
@@ -264,12 +804,12 @@ static void rm57_shutdown(struct uart_dev_s *dev)
  *
  ****************************************************************************/
 
-static int rm57_attach(struct uart_dev_s *dev)
+static int up_attach(struct uart_dev_s *dev)
 {
-  struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
   int ret;
 
-  ret = irq_attach(priv->irq, rm57_interrupt, dev);
+  ret = irq_attach(priv->irq, up_interrupt, dev);
   if (ret == OK)
     {
       up_enable_irq(priv->irq);
@@ -279,7 +819,7 @@ static int rm57_attach(struct uart_dev_s *dev)
 }
 
 /****************************************************************************
- * Name: rm57_detach
+ * Name: up_detach
  *
  * Description:
  *   Detach SCI interrupts.  This method is called when the serial port
@@ -287,29 +827,29 @@ static int rm57_attach(struct uart_dev_s *dev)
  *
  ****************************************************************************/
 
-static void rm57_detach(struct uart_dev_s *dev)
+static void up_detach(struct uart_dev_s *dev)
 {
-  struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
   up_disable_irq(priv->irq);
   irq_detach(priv->irq);
 }
 
 /****************************************************************************
- * Name: rm57_interrupt
+ * Name: up_interrupt
  *
  * Description:
  *   This is the common SCI interrupt handler.
  *
  ****************************************************************************/
 
-static int rm57_interrupt(int irq, void *context, void *arg)
+static int up_interrupt(int irq, void *context, void *arg)
 {
   struct uart_dev_s *dev = (struct uart_dev_s *)arg;
-  struct rm57_dev_s *priv;
+  struct up_dev_s *priv;
   uint32_t intvec;
 
   DEBUGASSERT(dev != NULL && dev->priv != NULL);
-  priv = (struct rm57_dev_s *)dev->priv;
+  priv = (struct up_dev_s *)dev->priv;
 
   for (; ; )
     {
@@ -317,7 +857,7 @@ static int rm57_interrupt(int irq, void *context, void *arg)
        * interrupt sources.
        */
 
-      intvec = rm57_serialin(priv, RM57_SCI_INTVECT0_OFFSET) &
+      intvec = up_serialin(priv, RM57_SCI_INTVECT0_OFFSET) &
                SCI_INTVECT_MASK;
 
       switch (intvec)
@@ -366,14 +906,14 @@ static int rm57_interrupt(int irq, void *context, void *arg)
 }
 
 /****************************************************************************
- * Name: rm57_ioctl
+ * Name: up_ioctl
  *
  * Description:
  *   All ioctl calls will be routed through this method
  *
  ****************************************************************************/
 
-static int rm57_ioctl(struct file *filep, int cmd, unsigned long arg)
+static int up_ioctl(struct file *filep, int cmd, unsigned long arg)
 {
 #if defined(CONFIG_SERIAL_TERMIOS) || defined(CONFIG_SERIAL_TIOCSERGSTRUCT)
   struct inode      *inode = filep->f_inode;
@@ -386,14 +926,14 @@ static int rm57_ioctl(struct file *filep, int cmd, unsigned long arg)
 #ifdef CONFIG_SERIAL_TIOCSERGSTRUCT
     case TIOCSERGSTRUCT:
       {
-         struct rm57_dev_s *user = (struct rm57_dev_s *)arg;
+         struct up_dev_s *user = (struct up_dev_s *)arg;
          if (!user)
            {
              ret = -EINVAL;
            }
          else
            {
-             memcpy(user, dev->priv, sizeof(struct rm57_dev_s));
+             memcpy(user, dev->priv, sizeof(struct up_dev_s));
            }
        }
        break;
@@ -403,7 +943,7 @@ static int rm57_ioctl(struct file *filep, int cmd, unsigned long arg)
     case TCGETS:
       {
         struct termios  *termiosp = (struct termios *)arg;
-        struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
+        struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
 
         if (!termiosp)
           {
@@ -441,7 +981,7 @@ static int rm57_ioctl(struct file *filep, int cmd, unsigned long arg)
     case TCSETS:
       {
         struct termios  *termiosp = (struct termios *)arg;
-        struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
+        struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
         uint32_t baud;
         uint32_t ints;
         uint8_t parity;
@@ -498,9 +1038,9 @@ static int rm57_ioctl(struct file *filep, int cmd, unsigned long arg)
             priv->config.bits      = nbits;
             priv->config.stopbits2 = stop2;
 
-            rm57_disableallints(priv, &ints);
+            up_disableallints(priv, &ints);
             ret = rm57_sci_configure(priv->scibase, &priv->config);
-            rm57_restoresciint(priv, ints);
+            up_restoresciint(priv, ints);
           }
       }
       break;
@@ -515,7 +1055,7 @@ static int rm57_ioctl(struct file *filep, int cmd, unsigned long arg)
 }
 
 /****************************************************************************
- * Name: rm57_receive
+ * Name: up_receive
  *
  * Description:
  *   Called (usually) from the interrupt level to receive one character
@@ -524,84 +1064,84 @@ static int rm57_ioctl(struct file *filep, int cmd, unsigned long arg)
  *
  ****************************************************************************/
 
-static int rm57_receive(struct uart_dev_s *dev, unsigned int *status)
+static int up_receive(struct uart_dev_s *dev, unsigned int *status)
 {
-  struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
 
-  *status = rm57_serialin(priv, RM57_SCI_FLR_OFFSET);
-  return (int)(rm57_serialin(priv, RM57_SCI_RD_OFFSET) & 0xff);
+  *status = up_serialin(priv, RM57_SCI_FLR_OFFSET);
+  return (int)(up_serialin(priv, RM57_SCI_RD_OFFSET) & 0xff);
 }
 
 /****************************************************************************
- * Name: rm57_rxint
+ * Name: up_rxint
  *
  * Description:
  *   Call to enable or disable RXRDY interrupts
  *
  ****************************************************************************/
 
-static void rm57_rxint(struct uart_dev_s *dev, bool enable)
+static void up_rxint(struct uart_dev_s *dev, bool enable)
 {
-  struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
 
   if (enable)
     {
 #ifndef CONFIG_SUPPRESS_SERIAL_INTS
-      rm57_serialout(priv, RM57_SCI_SETINT_OFFSET, SCI_INT_RX);
+      up_serialout(priv, RM57_SCI_SETINT_OFFSET, SCI_INT_RX);
 #endif
     }
   else
     {
-      rm57_serialout(priv, RM57_SCI_CLEARINT_OFFSET, SCI_INT_RX);
+      up_serialout(priv, RM57_SCI_CLEARINT_OFFSET, SCI_INT_RX);
     }
 }
 
 /****************************************************************************
- * Name: rm57_rxavailable
+ * Name: up_rxavailable
  *
  * Description:
  *   Return true if the receive holding register is not empty
  *
  ****************************************************************************/
 
-static bool rm57_rxavailable(struct uart_dev_s *dev)
+static bool up_rxavailable(struct uart_dev_s *dev)
 {
-  struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
-  return ((rm57_serialin(priv, RM57_SCI_FLR_OFFSET) & SCI_FLR_RXRDY) != 0);
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
+  return ((up_serialin(priv, RM57_SCI_FLR_OFFSET) & SCI_FLR_RXRDY) != 0);
 }
 
 /****************************************************************************
- * Name: rm57_send
+ * Name: up_send
  *
  * Description:
  *   This method will send one byte on the SCI
  *
  ****************************************************************************/
 
-static void rm57_send(struct uart_dev_s *dev, int ch)
+static void up_send(struct uart_dev_s *dev, int ch)
 {
-  struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
-  rm57_serialout(priv, RM57_SCI_TD_OFFSET, (uint32_t)ch);
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
+  up_serialout(priv, RM57_SCI_TD_OFFSET, (uint32_t)ch);
 }
 
 /****************************************************************************
- * Name: rm57_txint
+ * Name: up_txint
  *
  * Description:
  *   Call to enable or disable TX interrupts
  *
  ****************************************************************************/
 
-static void rm57_txint(struct uart_dev_s *dev, bool enable)
+static void up_txint(struct uart_dev_s *dev, bool enable)
 {
-  struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
   irqstate_t flags;
 
   flags = enter_critical_section();
   if (enable)
     {
 #ifndef CONFIG_SUPPRESS_SERIAL_INTS
-      rm57_serialout(priv, RM57_SCI_SETINT_OFFSET, SCI_INT_TX);
+      up_serialout(priv, RM57_SCI_SETINT_OFFSET, SCI_INT_TX);
 
       /* Fake a TX interrupt here by just calling uart_xmitchars() with
        * interrupts disabled (note this may recurse).
@@ -612,40 +1152,468 @@ static void rm57_txint(struct uart_dev_s *dev, bool enable)
     }
   else
     {
-      rm57_serialout(priv, RM57_SCI_CLEARINT_OFFSET, SCI_INT_TX);
+      up_serialout(priv, RM57_SCI_CLEARINT_OFFSET, SCI_INT_TX);
     }
 
   leave_critical_section(flags);
 }
 
 /****************************************************************************
- * Name: rm57_txready
+ * Name: up_txready
  *
  * Description:
  *   Return true if the transmit holding register is empty (TXRDY)
  *
  ****************************************************************************/
 
-static bool rm57_txready(struct uart_dev_s *dev)
+static bool up_txready(struct uart_dev_s *dev)
 {
-  struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
-  return ((rm57_serialin(priv, RM57_SCI_FLR_OFFSET) & SCI_FLR_TXRDY) != 0);
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
+  return ((up_serialin(priv, RM57_SCI_FLR_OFFSET) & SCI_FLR_TXRDY) != 0);
 }
 
 /****************************************************************************
- * Name: rm57_txempty
+ * Name: up_txempty
  *
  * Description:
  *   Return true if the transmit holding and shift registers are empty
  *
  ****************************************************************************/
 
-static bool rm57_txempty(struct uart_dev_s *dev)
+static bool up_txempty(struct uart_dev_s *dev)
 {
-  struct rm57_dev_s *priv = (struct rm57_dev_s *)dev->priv;
-  return ((rm57_serialin(priv, RM57_SCI_FLR_OFFSET) &
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
+  return ((up_serialin(priv, RM57_SCI_FLR_OFFSET) &
           SCI_FLR_TXEMPTY) != 0);
 }
+
+/****************************************************************************
+ * Name: up_dma_nextrx
+ *
+ * Description:
+ *   Returns the index into the RX FIFO where the DMA engine will write
+ *   the next byte, computed from the DMA channel's residual element
+ *   count.
+ *
+ ****************************************************************************/
+
+#ifdef SERIAL_HAVE_RXDMA
+static int up_dma_nextrx(struct up_dev_s *priv)
+{
+  size_t dmaresidual = rm57_dmaresidual(priv->rxdma);
+
+  return (RXDMA_BUFFER_SIZE - (int)dmaresidual) % RXDMA_BUFFER_SIZE;
+}
+#endif
+
+/****************************************************************************
+ * Name: up_dma_setup
+ *
+ * Description:
+ *   Configure the SCI baud/bits/parity as with up_setup(), then acquire
+ *   and arm the RX and/or TX DMA channels configured for this port.
+ *
+ ****************************************************************************/
+
+#if defined(SERIAL_HAVE_RXDMA) || defined(SERIAL_HAVE_TXDMA)
+static int up_dma_setup(struct uart_dev_s *dev)
+{
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
+  int ret;
+
+  /* Do the basic SCI setup first, unless we are the console (which was
+   * already configured by rm57_lowsetup()).
+   */
+
+  if (!dev->isconsole)
+    {
+      ret = up_setup(dev);
+      if (ret != OK)
+        {
+          return ret;
+        }
+    }
+
+#ifdef SERIAL_HAVE_TXDMA
+  if (priv->txdma_req != RM57_DMA_NOREQ)
+    {
+      priv->txdma = rm57_dmachannel(priv->txdma_req);
+    }
+#endif
+
+#ifdef SERIAL_HAVE_RXDMA
+  if (priv->rxdma_req != RM57_DMA_NOREQ)
+    {
+      struct rm57_dmacfg_s rxdmacfg;
+
+      priv->rxdma = rm57_dmachannel(priv->rxdma_req);
+
+      /* Configure for circular DMA reception into the RX FIFO: one byte
+       * (one frame, 8-bit elements) is transferred per hardware request,
+       * source address fixed at the SCI receive data register,
+       * destination address auto-incrementing through the ring buffer.
+       * AIM keeps the channel armed for hardware triggering past the end
+       * of a block (see the file-level comment on TRM 20.2.8/20.3.1.5 for
+       * why this gives circular behavior for a byte-per-byte hardware
+       * request source like this one).
+       */
+
+      rxdmacfg.saddr     = priv->scibase + RM57_SCI_RD_DMA_OFFSET;
+      rxdmacfg.daddr     = (uint32_t)priv->rxfifo;
+      rxdmacfg.nframes   = RXDMA_BUFFER_SIZE;
+      rxdmacfg.nelems    = 1;
+      rxdmacfg.chctrl    = DMA_CHCTRL_RES_8BIT | DMA_CHCTRL_WES_8BIT |
+                            DMA_CHCTRL_ADDMR_CONST |
+                            DMA_CHCTRL_ADDMW_INCR | DMA_CHCTRL_AIM;
+      rxdmacfg.parassign = DMA_PAR_AB_B_RD_A_WR;
+      rm57_dmasetup(priv->rxdma, &rxdmacfg);
+
+      /* Reset our DMA shadow pointer and Rx data availability count to
+       * match the buffer just programmed above.
+       */
+
+      priv->rxdmanext  = 0;
+      priv->rxdmaavail = 0;
+
+      up_invalidate_dcache((uintptr_t)priv->rxfifo,
+                            (uintptr_t)priv->rxfifo + RXDMA_BUFFER_SIZE);
+
+      /* Enable RX DMA requests at the SCI (byte-per-byte, since
+       * MBUF_MODE=0) and start the DMA channel, arranging for callbacks
+       * at the half and full points in the FIFO so there is always half
+       * a FIFO worth of time to claim bytes before they are
+       * overwritten.
+       */
+
+      up_serialout(priv, RM57_SCI_SETINT_OFFSET,
+                   SCI_INT_RXDMA | SCI_INT_RXDMAALL);
+
+      rm57_dmastart(priv->rxdma, up_dma_rxcallback, priv, true);
+    }
+#endif
+
+  return OK;
+}
+#endif
+
+/****************************************************************************
+ * Name: up_dma_shutdown
+ *
+ * Description:
+ *   Disable the SCI and release any DMA channels acquired by
+ *   up_dma_setup().
+ *
+ ****************************************************************************/
+
+#if defined(SERIAL_HAVE_RXDMA) || defined(SERIAL_HAVE_TXDMA)
+static void up_dma_shutdown(struct uart_dev_s *dev)
+{
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
+
+  up_serialout(priv, RM57_SCI_CLEARINT_OFFSET,
+               SCI_INT_TXDMA | SCI_INT_RXDMA | SCI_INT_RXDMAALL);
+
+  up_shutdown(dev);
+
+#ifdef SERIAL_HAVE_TXDMA
+  if (priv->txdma != NULL)
+    {
+      rm57_dmastop(priv->txdma);
+      rm57_dmafree(priv->txdma);
+      priv->txdma = NULL;
+    }
+#endif
+
+#ifdef SERIAL_HAVE_RXDMA
+  if (priv->rxdma != NULL)
+    {
+      rm57_dmastop(priv->rxdma);
+      rm57_dmafree(priv->rxdma);
+      priv->rxdma = NULL;
+    }
+#endif
+}
+#endif
+
+/****************************************************************************
+ * Name: up_dma_receive
+ *
+ * Description:
+ *   Called (usually) from the DMA callback level to receive one character
+ *   from the SCI's RX DMA ring buffer.  Error status is not tracked per
+ *   byte in DMA mode; 0 is always returned.
+ *
+ ****************************************************************************/
+
+#ifdef SERIAL_HAVE_RXDMA
+static int up_dma_receive(struct uart_dev_s *dev, unsigned int *status)
+{
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
+  int nextrx = up_dma_nextrx(priv);
+  int c = 0;
+
+  *status = 0;
+
+  /* Check if more data is available */
+
+  if (nextrx != (int)priv->rxdmanext)
+    {
+      /* If the data cache is enabled, then we also need to manage cache
+       * coherency.  Are any bytes available in the currently coherent
+       * region of the data cache?
+       */
+
+      if (priv->rxdmaavail == 0)
+        {
+          uint32_t rxdmaavail;
+          uintptr_t addr;
+
+          /* No.. then we will have to invalidate additional space in the
+           * Rx DMA buffer.
+           */
+
+          if (nextrx > (int)priv->rxdmanext)
+            {
+              rxdmaavail = nextrx - priv->rxdmanext;
+            }
+          else
+            {
+              rxdmaavail = RXDMA_BUFFER_SIZE - priv->rxdmanext;
+            }
+
+          addr = (uintptr_t)&priv->rxfifo[priv->rxdmanext];
+          up_invalidate_dcache(addr, addr + rxdmaavail);
+
+          priv->rxdmaavail = rxdmaavail;
+        }
+
+      priv->rxdmaavail--;
+
+      /* Now read from the DMA buffer */
+
+      c = priv->rxfifo[priv->rxdmanext];
+
+      priv->rxdmanext++;
+      if (priv->rxdmanext == RXDMA_BUFFER_SIZE)
+        {
+          priv->rxdmanext = 0;
+        }
+    }
+
+  /* NOTE: If no data is available, we return 0, which is of course valid
+   * binary data.  The protocol is that the upper half driver must call
+   * up_dma_rxavailable() prior to calling this function to assure that
+   * this never happens.
+   */
+
+  return c;
+}
+#endif
+
+/****************************************************************************
+ * Name: up_dma_rxint
+ *
+ * Description:
+ *   Call to enable or disable RX reception via DMA
+ *
+ ****************************************************************************/
+
+#ifdef SERIAL_HAVE_RXDMA
+static void up_dma_rxint(struct uart_dev_s *dev, bool enable)
+{
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
+
+  /* Note that it is not safe to check for available bytes and
+   * immediately pass them to uart_recvchars() as that could potentially
+   * recurse back into us.  Instead, bytes wait until the next DMA
+   * callback or rm57_serial_dma_poll() call.
+   */
+
+  priv->rxenable = enable;
+}
+#endif
+
+/****************************************************************************
+ * Name: up_dma_rxavailable
+ *
+ * Description:
+ *   Return true if there are unclaimed bytes in the RX DMA ring buffer
+ *
+ ****************************************************************************/
+
+#ifdef SERIAL_HAVE_RXDMA
+static bool up_dma_rxavailable(struct uart_dev_s *dev)
+{
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
+
+  return (up_dma_nextrx(priv) != (int)priv->rxdmanext);
+}
+#endif
+
+/****************************************************************************
+ * Name: up_dma_rxcallback
+ *
+ * Description:
+ *   DMA HBC/BTC callback: pass any newly available bytes up to the
+ *   generic serial layer.
+ *
+ ****************************************************************************/
+
+#ifdef SERIAL_HAVE_RXDMA
+static void up_dma_rxcallback(DMA_HANDLE handle, uint8_t status, void *arg)
+{
+  struct up_dev_s *priv = (struct up_dev_s *)arg;
+
+  if (priv->rxenable && up_dma_rxavailable(&priv->dev))
+    {
+      uart_recvchars(&priv->dev);
+    }
+}
+#endif
+
+/****************************************************************************
+ * Name: up_dma_send
+ *
+ * Description:
+ *   Called (usually) from the interrupt level to start a TX DMA transfer.
+ *   (Re-)configures the TX DMA channel with the current xmit buffer
+ *   contents.
+ *
+ ****************************************************************************/
+
+#ifdef SERIAL_HAVE_TXDMA
+static void up_dma_send(struct uart_dev_s *dev)
+{
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
+  struct rm57_dmacfg_s txdmacfg;
+
+  /* Stop DMA before reconfiguration */
+
+  rm57_dmastop(priv->txdma);
+
+  dev->dmatx.nbytes = 0;
+
+  /* Flush the contents of the TX buffer(s) into physical memory before
+   * the DMA engine reads them.
+   */
+
+  up_clean_dcache((uintptr_t)dev->dmatx.buffer,
+                  (uintptr_t)dev->dmatx.buffer + dev->dmatx.length);
+
+  if (dev->dmatx.nbuffer)
+    {
+      up_clean_dcache((uintptr_t)dev->dmatx.nbuffer,
+                      (uintptr_t)dev->dmatx.nbuffer + dev->dmatx.nlength);
+    }
+
+  txdmacfg.saddr     = (uint32_t)dev->dmatx.buffer;
+  txdmacfg.daddr     = priv->scibase + RM57_SCI_TD_DMA_OFFSET;
+  txdmacfg.nframes   = dev->dmatx.length;
+  txdmacfg.nelems    = 1;
+  txdmacfg.chctrl    = DMA_CHCTRL_RES_8BIT | DMA_CHCTRL_WES_8BIT |
+                        DMA_CHCTRL_ADDMR_INCR | DMA_CHCTRL_ADDMW_CONST;
+  txdmacfg.parassign = DMA_PAR_AB_A_RD_B_WR;
+  rm57_dmasetup(priv->txdma, &txdmacfg);
+
+  up_serialout(priv, RM57_SCI_SETINT_OFFSET, SCI_INT_TXDMA);
+
+  rm57_dmastart(priv->txdma, up_dma_txcallback, priv, false);
+}
+#endif
+
+/****************************************************************************
+ * Name: up_dma_txavailable
+ *
+ * Description:
+ *   Informs the DMA engine that TX data is available and ready for
+ *   transfer, if it is currently idle.
+ *
+ ****************************************************************************/
+
+#ifdef SERIAL_HAVE_TXDMA
+static void up_dma_txavailable(struct uart_dev_s *dev)
+{
+  struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
+  irqstate_t flags = enter_critical_section();
+
+  if (dev->dmatx.length == 0 && dev->dmatx.nlength == 0 &&
+      rm57_dmaresidual(priv->txdma) == 0)
+    {
+      uart_xmitchars_dma(dev);
+    }
+
+  leave_critical_section(flags);
+}
+#endif
+
+/****************************************************************************
+ * Name: up_dma_txcallback
+ *
+ * Description:
+ *   DMA BTC callback for a TX transfer: advances the xmit buffer and
+ *   either starts the next (split) transfer or notifies the generic
+ *   serial layer that the transfer is done.
+ *
+ ****************************************************************************/
+
+#ifdef SERIAL_HAVE_TXDMA
+static void up_dma_txcallback(DMA_HANDLE handle, uint8_t status, void *arg)
+{
+  struct up_dev_s *priv = (struct up_dev_s *)arg;
+  struct uart_dev_s *dev = &priv->dev;
+
+  if ((status & RM57_DMA_STATUS_BTC) != 0)
+    {
+      dev->dmatx.nbytes += dev->dmatx.length;
+      if (dev->dmatx.nlength)
+        {
+          struct rm57_dmacfg_s txdmacfg;
+
+          txdmacfg.saddr     = (uint32_t)dev->dmatx.nbuffer;
+          txdmacfg.daddr     = priv->scibase + RM57_SCI_TD_DMA_OFFSET;
+          txdmacfg.nframes   = dev->dmatx.nlength;
+          txdmacfg.nelems    = 1;
+          txdmacfg.chctrl    = DMA_CHCTRL_RES_8BIT | DMA_CHCTRL_WES_8BIT |
+                                DMA_CHCTRL_ADDMR_INCR |
+                                DMA_CHCTRL_ADDMW_CONST;
+          txdmacfg.parassign = DMA_PAR_AB_A_RD_B_WR;
+          rm57_dmasetup(priv->txdma, &txdmacfg);
+
+          dev->dmatx.length  = dev->dmatx.nlength;
+          dev->dmatx.nlength = 0;
+
+          rm57_dmastart(priv->txdma, up_dma_txcallback, priv, false);
+          return;
+        }
+    }
+
+  /* Transfer complete and no follow-on buffer: stop generating TX DMA
+   * requests until the next up_dma_send() call.
+   */
+
+  up_serialout(priv, RM57_SCI_CLEARINT_OFFSET, SCI_INT_TXDMA);
+
+  uart_xmitchars_done(dev);
+
+  up_dma_txavailable(dev);
+}
+#endif
+
+/****************************************************************************
+ * Name: up_dma_txint
+ *
+ * Description:
+ *   Call to enable or disable TX interrupts.  Nothing to do here: TX DMA
+ *   requests replace the TX interrupt entirely, and are activated by
+ *   up_dma_send()/up_dma_txcallback() instead.
+ *
+ ****************************************************************************/
+
+#ifdef SERIAL_HAVE_TXDMA
+static void up_dma_txint(struct uart_dev_s *dev, bool enable)
+{
+}
+#endif
 
 /****************************************************************************
  * Public Functions
@@ -663,9 +1631,17 @@ void arm_serialinit(void)
 {
   /* Disable all SCIs */
 
-  rm57_disableallints(TTYS0_DEV.priv, NULL);
+#ifdef TTYS0_DEV
+  up_disableallints(TTYS0_DEV.priv, NULL);
+#endif
 #ifdef TTYS1_DEV
-  rm57_disableallints(TTYS1_DEV.priv, NULL);
+  up_disableallints(TTYS1_DEV.priv, NULL);
+#endif
+#ifdef TTYS2_DEV
+  up_disableallints(TTYS2_DEV.priv, NULL);
+#endif
+#ifdef TTYS3_DEV
+  up_disableallints(TTYS3_DEV.priv, NULL);
 #endif
 
 #ifdef CONSOLE_DEV
@@ -674,15 +1650,82 @@ void arm_serialinit(void)
    */
 
   CONSOLE_DEV.isconsole = true;
-  rm57_setup(&CONSOLE_DEV);
+  up_setup(&CONSOLE_DEV);
 
   uart_register("/dev/console", &CONSOLE_DEV);
+
+#if defined(SERIAL_HAVE_CONSOLE_RXDMA) || defined(SERIAL_HAVE_CONSOLE_TXDMA)
+  /* If DMA is enabled on the console, layer the DMA channel setup on top
+   * of the basic register configuration performed just above.
+   */
+
+  up_dma_setup(&CONSOLE_DEV);
+#endif
 #endif
 
+#ifdef TTYS0_DEV
   uart_register("/dev/ttyS0", &TTYS0_DEV);
+#endif
 #ifdef TTYS1_DEV
   uart_register("/dev/ttyS1", &TTYS1_DEV);
 #endif
+#ifdef TTYS2_DEV
+  uart_register("/dev/ttyS2", &TTYS2_DEV);
+#endif
+#ifdef TTYS3_DEV
+  uart_register("/dev/ttyS3", &TTYS3_DEV);
+#endif
 }
+
+/****************************************************************************
+ * Name: rm57_serial_dma_poll
+ *
+ * Description:
+ *   Checks RX DMA buffers for received bytes that have not yet
+ *   accumulated to the point where the DMA half/full (HBC/BTC) interrupt
+ *   has triggered. Boards using RXDMA and needing low-latency reception
+ *   of short, infrequent messages should call this periodically (e.g.
+ *   from a timer).
+ *
+ ****************************************************************************/
+
+#ifdef SERIAL_HAVE_RXDMA
+void rm57_serial_dma_poll(void)
+{
+  irqstate_t flags;
+
+  flags = enter_critical_section();
+
+#ifdef CONFIG_RM57_SCI1_RXDMA
+  if (g_sci1priv.rxdma != NULL)
+    {
+      up_dma_rxcallback(g_sci1priv.rxdma, 0, &g_sci1priv);
+    }
+#endif
+
+#ifdef CONFIG_RM57_SCI2_RXDMA
+  if (g_sci2priv.rxdma != NULL)
+    {
+      up_dma_rxcallback(g_sci2priv.rxdma, 0, &g_sci2priv);
+    }
+#endif
+
+#ifdef CONFIG_RM57_SCI3_RXDMA
+  if (g_sci3priv.rxdma != NULL)
+    {
+      up_dma_rxcallback(g_sci3priv.rxdma, 0, &g_sci3priv);
+    }
+#endif
+
+#ifdef CONFIG_RM57_SCI4_RXDMA
+  if (g_sci4priv.rxdma != NULL)
+    {
+      up_dma_rxcallback(g_sci4priv.rxdma, 0, &g_sci4priv);
+    }
+#endif
+
+  leave_critical_section(flags);
+}
+#endif
 
 #endif /* USE_SERIALDRIVER */

@@ -102,8 +102,13 @@
 #define RM57_REQ_SCI3HIGH            64 /* SCI3 high level interrupt */
 #define RM57_REQ_I2C                 66 /* I2C interrupt */
 #define RM57_REQ_HET2LOW             73 /* HET2 low level interrupt */
-#define RM57_REQ_SCILOW              74 /* SCI2 (LIN-less) low level
-                                          * interrupt */
+
+/* Channel 74 pairs with RM57_REQ_SCI3HIGH (64) above - it is SCI3's low
+ * level interrupt (SCI3 has no LIN capability, hence "LIN-less" in the
+ * original HALCoGen project comment this was transcribed from; that
+ * phrasing does not fit SCI2/LIN2, which is a full dual-role module).
+ */
+#define RM57_REQ_SCI3LOW             74 /* SCI3 low level interrupt */
 #define RM57_REQ_EMACTX              77 /* EMAC Tx interrupt */
 #define RM57_REQ_EMACRX              79 /* EMAC Rx interrupt */
 #define RM57_REQ_DCC1DONE            82 /* DCC1 done interrupt */

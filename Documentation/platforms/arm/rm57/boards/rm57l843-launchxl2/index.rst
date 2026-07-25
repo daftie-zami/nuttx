@@ -12,13 +12,14 @@ than any particular application.
 
 .. warning::
 
-   This board port is new and experimental. Only the serial console (SCI1)
-   and the two user LEDs are currently supported; pin-mux configuration,
-   button support, and most on-chip peripherals are not yet implemented.
-   Some of the values documented below (PLL/clock configuration, LED
-   polarity, JTAG IDCODE) were taken from TI's HALCoGen-generated reference
-   project or from the RM57L843 datasheet rather than confirmed against
-   this specific board's schematic — see the comments in
+   This board port is new and experimental. Only the serial console
+   (SCI1), the two user LEDs, and the DMA controller are currently
+   supported; pin-mux configuration, button support, and most on-chip
+   peripherals are not yet implemented. Some of the values documented
+   below (PLL/clock configuration, LED polarity, JTAG IDCODE) were taken
+   from TI's HALCoGen-generated reference project or from the RM57L843
+   datasheet rather than confirmed against this specific board's
+   schematic — see the comments in
    ``boards/arm/rm57/rm57l843-launchxl2/include/board.h`` for details.
 
 Features
@@ -30,7 +31,10 @@ Features
 * 4 MB of on-chip program flash, 512 KB of on-chip SRAM
 * Onboard XDS110 debug probe (JTAG)
 * 2 user LEDs
-* Single SCI (serial) interface currently supported
+* SCI1 wired up as the serial console; SCI2-SCI4 are supported by the
+  driver but not enabled by this board's default configuration (and
+  SCI2-SCI4 pin-mux is not programmed by this board port - see the
+  `Pin Mapping`_ note below)
 
 .. note::
 
@@ -80,7 +84,10 @@ Only the pins used by the currently supported peripherals are listed.
    The RM57L843 SCI1/LIN1 pins are used at their reset-default (primary)
    function, so no pin-mux configuration is required for the console.
    Header/connector pin numbers for LIN1RX/LIN1TX have not been confirmed
-   against the LAUNCHXL2-RM57L schematic.
+   against the LAUNCHXL2-RM57L schematic. SCI2/LIN2, SCI3, and SCI4 are
+   not brought out to reset-default pin functions on this device and
+   would need IOMM pin-mux configuration (not implemented by this board
+   port) before use.
 
 Serial Console
 ==============
@@ -91,6 +98,15 @@ SCI1 is used as the serial console. The default configuration is:
 
 The baud rate and stop bits are configurable via ``CONFIG_SCI1_BAUD`` and
 ``CONFIG_SCI1_2STOP``.
+
+Additional SCI ports (SCI2-SCI4) can be enabled via
+``CONFIG_RM57_SCI2``/``RM57_SCI3``/``RM57_SCI4``; whichever one is *not*
+selected as the console (``CONFIG_SCIn_SERIAL_CONSOLE``) is registered as
+``/dev/ttyS0``, ``/dev/ttyS1``, etc. in SCI1-SCI4 order. SCI1/LIN1 and
+SCI2/LIN2 are dual-role SCI/LIN modules; the serial driver always runs
+them in SCI-compatibility mode. See
+:doc:`the RM57 chip documentation </platforms/arm/rm57/index>` for the
+serial RX/TX DMA options and the LIN configuration scaffold.
 
 Power Supply
 ============

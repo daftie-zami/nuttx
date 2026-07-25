@@ -63,6 +63,7 @@
 
 /* System Modules Control Registers and Memories */
 
+#define RM57_DMARAM_BASE          0xfff80000 /* DMA control packet RAM (dmaRAMREG) */
 #define RM57_VIMRAM_BASE          0xfff82000 /* VIM RAM (vimRAM) */
 #define RM57_FWRAP_BASE           0xfff87000 /* Flash Wrapper (flashWREG) */
 #define RM57_PCR1_BASE            0xffff1000 /* PCR frame 1 (pcrREG1) */
@@ -83,5 +84,6 @@
 /* System Module - Frame 1 (systemREG1) */
 #define RM57_SYS1_BASE 0xffffff00
 #define RM57_ECLK_PORT_BASE       0xffffff04 /* ECLK GIO port (systemPORT) */
+#define RM57_DMA_BASE             0xfffff000 /* DMA control registers (dmaREG) */
 
 #endif /* __ARCH_ARM_SRC_RM57_HARDWARE_RM57L843_MEMORYMAP_H */
