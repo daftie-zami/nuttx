@@ -87,9 +87,57 @@
 
 /* PIN Multiplexor Initializer **********************************************/
 
-/* Pin-mux initialization is not yet implemented for this board;
- * BOARD_PINMUX_INITIALIZER is not currently defined.
+/* Balls listed here are switched away from their reset function by
+ * rm57_iomm_initialize() during boot; everything else keeps its reset
+ * function.  The definitions come from
+ * arch/arm/src/rm57/hardware/rm57l843_pinmux.h.
+ *
+ * SCI1/LIN1 needs no entry: its RX/TX balls are dedicated on RM57L843 and
+ * are not multiplexed at all.  The remaining SCI modules share their balls
+ * with N2HET1/N2HET2, so they only work once re-multiplexed here:
+ *
+ *   SCI2/LIN2  P4  (N2HET2[19]) -> LIN2RX, T5  (N2HET2[20]) -> LIN2TX
+ *   SCI3       W3  (N2HET1[6])  -> SCI3RX, N2  (N2HET1[13]) -> SCI3TX
+ *   SCI4       A13 (N2HET1[17]) -> SCI4RX, B13 (N2HET1[19]) -> SCI4TX
+ *
+ * All of these balls are brought out on the LaunchPad BoosterPack headers.
  */
+
+#if defined(CONFIG_RM57_SCI2) || defined(CONFIG_RM57_LIN)
+#  define BOARD_PINMUX_LIN2 \
+  PINMUX_P4_LIN2RX_PIN, \
+  PINMUX_T5_LIN2TX_PIN,
+#else
+#  define BOARD_PINMUX_LIN2
+#endif
+
+#ifdef CONFIG_RM57_SCI3
+#  define BOARD_PINMUX_SCI3 \
+  PINMUX_W3_SCI3RX_PIN, \
+  PINMUX_N2_SCI3TX_PIN,
+#else
+#  define BOARD_PINMUX_SCI3
+#endif
+
+#ifdef CONFIG_RM57_SCI4
+#  define BOARD_PINMUX_SCI4 \
+  PINMUX_A13_SCI4RX_PIN, \
+  PINMUX_B13_SCI4TX_PIN,
+#else
+#  define BOARD_PINMUX_SCI4
+#endif
+
+/* Left undefined when no multiplexed pin is in use, so that no pin-mux
+ * table is generated at all.
+ */
+
+#if defined(CONFIG_RM57_SCI2) || defined(CONFIG_RM57_LIN) || \
+    defined(CONFIG_RM57_SCI3) || defined(CONFIG_RM57_SCI4)
+#  define BOARD_PINMUX_INITIALIZER \
+  BOARD_PINMUX_LIN2 \
+  BOARD_PINMUX_SCI3 \
+  BOARD_PINMUX_SCI4
+#endif
 
 /* LED definitions **********************************************************/
 

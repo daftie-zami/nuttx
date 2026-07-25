@@ -26,6 +26,7 @@ include armv7-r/Make.defs
 
 CHIP_CSRCS  = rm57_boot.c rm57_clockconfig.c rm57_mpuinit.c rm57_gio.c
 CHIP_CSRCS += rm57_irq.c rm57_lowputc.c rm57_serial.c rm57_esm.c
+CHIP_CSRCS += rm57_iomm.c
 
 CHIP_ASRCS  = rm57_coreinit.S
 

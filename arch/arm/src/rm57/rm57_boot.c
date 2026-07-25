@@ -40,6 +40,7 @@
 #include "rm57_clockconfig.h"
 #include "rm57_esm.h"
 #include "rm57_gio.h"
+#include "rm57_iomm.h"
 #include "rm57_lowputc.h"
 #include "rm57_mpuinit.h"
 
@@ -145,6 +146,8 @@ void arm_boot(void)
   /* Initialize clocking (PLL, peripheral clocks, flash wait-states) */
 
   rm57_clockconfig();
+
+  rm57_iomm_initialize();
 
   /* Put the Error Signaling Module into a known, quiet state (all
    * error-pin channels/interrupts disabled, all latched flags

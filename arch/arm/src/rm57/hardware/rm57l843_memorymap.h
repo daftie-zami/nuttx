@@ -68,8 +68,7 @@
 #define RM57_FWRAP_BASE           0xfff87000 /* Flash Wrapper (flashWREG) */
 #define RM57_PCR1_BASE            0xffff1000 /* PCR frame 1 (pcrREG1) */
 
-/* Pin Multiplexing (pinMuxReg) */
-#define RM57_PINMUX_BASE 0xffff1c00
+#define RM57_IOMM_BASE            0xffff1c00 /* I/O mux and control (pinMuxReg) */
 #define RM57_PCR3_BASE            0xfff78000 /* PCR frame 3 (pcrREG3) */
 
 /* PCR frame 2, mirrored bus (pcrREG2) */
