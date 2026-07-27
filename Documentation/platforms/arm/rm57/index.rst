@@ -62,12 +62,21 @@ single UART frame.
 
 RX DMA writes into a per-port circular ring buffer sized by
 ``CONFIG_RM57_SERIAL_RXDMA_BUFFER_SIZE`` (rounded up to a multiple of the
-Cortex-R5's 32-byte D-cache line size). New bytes are picked up either
-when the DMA half/full ("HBC"/"BTC") interrupt fires, or by calling
-``rm57_serial_dma_poll()`` from a periodic context (e.g. a timer) -
-useful for boards that need low-latency reception of short, infrequent
-messages that would otherwise sit in the ring buffer until it is half
-full.
+Cortex-R5's 32-byte D-cache line size). New bytes are picked up when the
+DMA half/full ("HBC"/"BTC") interrupt fires, which alone would leave
+short, infrequent messages sitting in the ring buffer until it is half
+full. Unlike, say, the STM32 USART, the SCI has no idle-line interrupt
+to signal the end of a shorter burst, so ``rm57_serial_dma_poll()``
+flushes the rings instead.
+
+``CONFIG_RM57_SERIAL_RXDMA_POLL`` (enabled by default whenever a port
+uses RX DMA) dedicates **RTI compare 1** to calling it at
+``CONFIG_RM57_SERIAL_RXDMA_POLL_HZ`` (1 kHz by default), which bounds
+the added receive latency by one poll period and is what makes an RX
+DMA console usable interactively. Compare 1 shares free-running counter
+0 with the system tick on compare 0, so no additional timer hardware is
+consumed. Disable the option if every RX DMA port is used purely for
+bulk transfers and the interrupt is not wanted.
 
 The underlying hardware DMA request lines used are fixed per SCI
 instance (datasheet SPNS215C Table 6-41):

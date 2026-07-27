@@ -96,16 +96,19 @@
 #define RM57_SCI_IODFTCTRL_OFFSET    0x0090 /* I/O Error Enable Register */
 
 /* Byte lane of the 8-bit RX/TX data within the 32-bit RD/TD registers, as
- * seen by the DMA controller when it performs an 8-bit access.  RM57L843
- * is a little-endian device, so the data byte is expected at offset +0;
- * TI's HALCoGen examples for big-endian Hercules parts (TMS570 in BE
- * mode) instead target the register's +3 byte.  Kept as a single define
- * so it can be corrected in one place if hardware testing (DMA loopback,
- * see Documentation) shows otherwise.
+ * seen by the DMA controller when it performs an 8-bit access.
+ *
+ * The CPU runs little-endian, but the Hercules peripheral bus is BE-32:
+ * a sub-word access to a 32-bit peripheral register selects the byte lane
+ * as (3 - (addr & 3)).  This was confirmed on RM57L843 hardware, where
+ * 32-bit debug-port accesses to peripheral registers are byte-swapped
+ * (the reason OpenOCD needs "ti_be_32_quirks 1" for this device).  The
+ * RD/TD data byte (bits 7:0) is therefore at the register's +3 address
+ * for an 8-bit DMA access, matching TI's HALCoGen examples.
  */
 
-#define RM57_SCI_RD_DMA_OFFSET       (RM57_SCI_RD_OFFSET + 0)
-#define RM57_SCI_TD_DMA_OFFSET       (RM57_SCI_TD_OFFSET + 0)
+#define RM57_SCI_RD_DMA_OFFSET       (RM57_SCI_RD_OFFSET + 3)
+#define RM57_SCI_TD_DMA_OFFSET       (RM57_SCI_TD_OFFSET + 3)
 
 /* Register Bit-Field Definitions *******************************************/
 
