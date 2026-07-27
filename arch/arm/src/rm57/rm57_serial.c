@@ -261,6 +261,16 @@
 #  define SERIAL_HAVE_TXDMA_OPS 1
 #endif
 
+#undef SERIAL_HAVE_RXINT_METHODS
+#if defined(SERIAL_HAVE_NODMA_OPS) || defined(SERIAL_HAVE_TXDMA_OPS)
+#  define SERIAL_HAVE_RXINT_METHODS 1
+#endif
+
+#undef SERIAL_HAVE_TXINT_METHODS
+#if defined(SERIAL_HAVE_NODMA_OPS) || defined(SERIAL_HAVE_RXDMA_OPS)
+#  define SERIAL_HAVE_TXINT_METHODS 1
+#endif
+
 /* Sentinel for a port's [rt]xdma_req field when that direction's DMA is
  * not configured for it (the struct field still exists whenever *any*
  * port in the file uses that direction of DMA).
@@ -317,11 +327,15 @@ static int  up_attach(struct uart_dev_s *dev);
 static void up_detach(struct uart_dev_s *dev);
 static int  up_interrupt(int irq, void *context, void *arg);
 static int  up_ioctl(struct file *filep, int cmd, unsigned long arg);
+#ifdef SERIAL_HAVE_RXINT_METHODS
 static int  up_receive(struct uart_dev_s *dev, unsigned int *status);
 static void up_rxint(struct uart_dev_s *dev, bool enable);
 static bool up_rxavailable(struct uart_dev_s *dev);
+#endif
 static void up_send(struct uart_dev_s *dev, int ch);
+#ifdef SERIAL_HAVE_TXINT_METHODS
 static void up_txint(struct uart_dev_s *dev, bool enable);
+#endif
 static bool up_txready(struct uart_dev_s *dev);
 static bool up_txempty(struct uart_dev_s *dev);
 
@@ -1064,6 +1078,7 @@ static int up_ioctl(struct file *filep, int cmd, unsigned long arg)
  *
  ****************************************************************************/
 
+#ifdef SERIAL_HAVE_RXINT_METHODS
 static int up_receive(struct uart_dev_s *dev, unsigned int *status)
 {
   struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
@@ -1109,6 +1124,7 @@ static bool up_rxavailable(struct uart_dev_s *dev)
   struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
   return ((up_serialin(priv, RM57_SCI_FLR_OFFSET) & SCI_FLR_RXRDY) != 0);
 }
+#endif
 
 /****************************************************************************
  * Name: up_send
@@ -1132,6 +1148,7 @@ static void up_send(struct uart_dev_s *dev, int ch)
  *
  ****************************************************************************/
 
+#ifdef SERIAL_HAVE_TXINT_METHODS
 static void up_txint(struct uart_dev_s *dev, bool enable)
 {
   struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
@@ -1157,6 +1174,7 @@ static void up_txint(struct uart_dev_s *dev, bool enable)
 
   leave_critical_section(flags);
 }
+#endif
 
 /****************************************************************************
  * Name: up_txready

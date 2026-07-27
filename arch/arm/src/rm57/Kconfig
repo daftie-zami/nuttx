@@ -128,6 +128,36 @@ config RM57_SERIAL_RXDMA_BUFFER_SIZE
 		claim it. Rounded up to a multiple of the 32-byte Cortex-R5
 		D-cache line size.
 
+config RM57_SERIAL_RXDMA_POLL
+	bool "Periodic RX DMA flush"
+	default y
+	depends on RM57_SCI1_RXDMA || RM57_SCI2_RXDMA || RM57_SCI3_RXDMA || \
+		RM57_SCI4_RXDMA
+	---help---
+		RX DMA hands received bytes to the upper half only when the
+		DMA half/full interrupt fires, that is, after half of
+		RM57_SERIAL_RXDMA_BUFFER_SIZE bytes. The SCI has no idle-line
+		interrupt to signal the end of a shorter burst, so this option
+		dedicates RTI compare 1 to calling rm57_serial_dma_poll()
+		periodically, which bounds the added receive latency by the
+		poll period.
+
+		Leave this enabled unless every RX DMA port is used purely for
+		bulk transfers; without it, a short message sits in the ring
+		buffer until enough further bytes arrive, and an RX DMA console
+		is unusable interactively.
+
+config RM57_SERIAL_RXDMA_POLL_HZ
+	int "RX DMA flush frequency (Hz)"
+	default 1000
+	range 1 100000
+	depends on RM57_SERIAL_RXDMA_POLL
+	---help---
+		How often the RX DMA rings are flushed, in Hz. The worst-case
+		added receive latency is one poll period; the cost is one short
+		interrupt at this rate, which checks one pointer per enabled
+		port and returns when nothing was received.
+
 endmenu # RM57 Peripheral Support
 
 endif # ARCH_CHIP_RM57

@@ -72,6 +72,15 @@ Only the pins used by the currently supported peripherals are listed.
    * - (n/a)
      - LIN1RX / LIN1TX
      - SCI1, used as the serial console
+   * - P4 / T5
+     - LIN2RX / LIN2TX
+     - SCI2, multiplexed away from N2HET2[19]/N2HET2[20]
+   * - W3 / N2
+     - SCI3RX / SCI3TX
+     - SCI3, multiplexed away from N2HET1[6]/N2HET1[13]
+   * - A13 / B13
+     - SCI4RX / SCI4TX
+     - SCI4, multiplexed away from N2HET1[17]/N2HET1[19]
    * - J2
      - GIOB[6]
      - User LED B6
@@ -84,10 +93,10 @@ Only the pins used by the currently supported peripherals are listed.
    The RM57L843 SCI1/LIN1 pins are used at their reset-default (primary)
    function, so no pin-mux configuration is required for the console.
    Header/connector pin numbers for LIN1RX/LIN1TX have not been confirmed
-   against the LAUNCHXL2-RM57L schematic. SCI2/LIN2, SCI3, and SCI4 are
-   not brought out to reset-default pin functions on this device and
-   would need IOMM pin-mux configuration (not implemented by this board
-   port) before use.
+   against the LAUNCHXL2-RM57L schematic. SCI2/LIN2, SCI3 and SCI4 share
+   their balls with N2HET1/N2HET2 and are re-multiplexed at boot by
+   ``BOARD_PINMUX_INITIALIZER`` in ``include/board.h``, but only when the
+   corresponding ``CONFIG_RM57_SCIn`` is selected.
 
 Serial Console
 ==============
@@ -100,7 +109,8 @@ The baud rate and stop bits are configurable via ``CONFIG_SCI1_BAUD`` and
 ``CONFIG_SCI1_2STOP``.
 
 Additional SCI ports (SCI2-SCI4) can be enabled via
-``CONFIG_RM57_SCI2``/``RM57_SCI3``/``RM57_SCI4``; whichever one is *not*
+``CONFIG_RM57_SCI2``/``RM57_SCI3``/``RM57_SCI4``, which also pulls their
+RX/TX balls into the pin-mux table applied at boot; whichever one is *not*
 selected as the console (``CONFIG_SCIn_SERIAL_CONSOLE``) is registered as
 ``/dev/ttyS0``, ``/dev/ttyS1``, etc. in SCI1-SCI4 order. SCI1/LIN1 and
 SCI2/LIN2 are dual-role SCI/LIN modules; the serial driver always runs
@@ -125,7 +135,48 @@ usable here). OpenOCD can be used with a Cortex-R5 (``cortex_r4`` driver)
 target configuration that routes through the ICEpick-C, followed by GDB
 to load and debug the image.
 
+Configurations
+==============
+
 nsh
 ---
 
 Basic NuttShell configuration (console enabled on SCI1, at 9600 baud).
+
+scitest
+-------
+
+NuttShell plus all four SCI ports, for exercising the serial driver and
+the SCI pin multiplexing. SCI1 remains the console (9600 baud, 8N2, on
+the XDS110 backchannel); SCI2, SCI3 and SCI4 come up at 115200 baud, 8N1
+and are registered as ``/dev/ttyS0``, ``/dev/ttyS1`` and ``/dev/ttyS2``
+respectively. Their RX/TX balls are multiplexed at boot (see the Pin
+Mapping table above), so they must be wired to a USB-serial adapter, or
+looped back to each other, to be useful.
+
+``CONFIG_SERIAL_TERMIOS`` is enabled, and the ``serialblaster``,
+``serialrx`` and ``termios`` examples are built in::
+
+    nsh> serialrx /dev/ttyS1 1000     # count 1000 received bytes
+    nsh> serialblaster /dev/ttyS1     # transmit continuously
+    nsh> echo hello > /dev/ttyS2      # one-shot write
+
+Both ``serialrx`` and ``serialblaster`` take the device path as their
+first argument and default to ``/dev/ttyS0``.
+
+scidma
+------
+
+Identical to ``scitest``, except that all four SCI ports - the console
+included - run with both RX and TX DMA
+(``CONFIG_RM57_SCIn_RXDMA``/``TXDMA``, eight DMA channels in total).
+The two configurations are an A/B pair for the same serial tests.
+
+RX DMA hands received bytes to the upper half when the DMA half/full
+interrupt fires, i.e. only after ``CONFIG_RM57_SERIAL_RXDMA_BUFFER_SIZE
+/ 2`` bytes (32 by default). To keep short messages and interactive
+console input from stalling behind that threshold, RTI compare 1 calls
+``rm57_serial_dma_poll()`` at ``CONFIG_RM57_SERIAL_RXDMA_POLL_HZ``
+(1 kHz here), bounding the extra latency by one poll period. Both the
+console and the test ports therefore behave the same as in ``scitest``,
+only with the transfers themselves done by DMA.

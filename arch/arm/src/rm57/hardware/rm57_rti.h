@@ -112,6 +112,8 @@
 #define RM57_RTI_CPUC0 (RM57_RTI1_BASE + RM57_RTI_CPUCx_OFFSET(0))
 #define RM57_RTI_COMP0 (RM57_RTI1_BASE + RM57_RTI_COMPx_OFFSET(0))
 #define RM57_RTI_UDCP0 (RM57_RTI1_BASE + RM57_RTI_UDCPx_OFFSET(0))
+#define RM57_RTI_COMP1 (RM57_RTI1_BASE + RM57_RTI_COMPx_OFFSET(1))
+#define RM57_RTI_UDCP1 (RM57_RTI1_BASE + RM57_RTI_UDCPx_OFFSET(1))
 #define RM57_RTI_SETINTENA (RM57_RTI1_BASE + RM57_RTI_SETINTENA_OFFSET)
 #define RM57_RTI_CLEARINTENA (RM57_RTI1_BASE + RM57_RTI_CLEARINTENA_OFFSET)
 #define RM57_RTI_INTFLAG            (RM57_RTI1_BASE + RM57_RTI_INTFLAG_OFFSET)
@@ -125,6 +127,18 @@
 
 /* Bit 1: Enable counter block 1 */
 #define RTI_GCTRL_CNT1EN (1 << 1)
+
+/* Compare Control Register.
+ *
+ * Each compare selects the free-running counter it is compared against:
+ * 0 selects counter 0, 1 selects counter 1.
+ */
+
+#define RTI_COMPCTRL_COMPSEL(n)      (1 << ((n) << 2))
+#  define RTI_COMPCTRL_COMPSEL0      RTI_COMPCTRL_COMPSEL(0)
+#  define RTI_COMPCTRL_COMPSEL1      RTI_COMPCTRL_COMPSEL(1)
+#  define RTI_COMPCTRL_COMPSEL2      RTI_COMPCTRL_COMPSEL(2)
+#  define RTI_COMPCTRL_COMPSEL3      RTI_COMPCTRL_COMPSEL(3)
 
 /* Compare/interrupt bits (SETINTENA/CLEARINTENA/INTFLAG) */
 
