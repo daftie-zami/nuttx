@@ -44,5 +44,13 @@
 
 int rm57_bringup(void)
 {
+#ifdef CONFIG_RM57_DCAN
+  int ret = rm57_can_setup();
+  if (ret < 0)
+    {
+      return ret;
+    }
+#endif
+
   return OK;
 }

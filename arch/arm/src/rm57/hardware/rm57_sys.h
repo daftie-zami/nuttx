@@ -265,6 +265,21 @@
 #  define SYS_RCLKSRC_RTI1DIV_DIV4    (2 << SYS_RCLKSRC_RTI1DIV_SHIFT)
 #  define SYS_RCLKSRC_RTI1DIV_DIV8    (3 << SYS_RCLKSRC_RTI1DIV_SHIFT)
 
+/* Peripheral Asynchronous Clock Source Register (VCLKASRC).  VCLKA1 is
+ * the DCAN CAN_CLK; VCLKA2 feeds other asynchronous peripherals.  Both
+ * take the SYS_CLKSRC_* encodings.
+ */
+
+/* Bits 0-3: VCLKA1 source */
+#define SYS_VCLKASRC_VCLKA1S_SHIFT (0)
+#define SYS_VCLKASRC_VCLKA1S_MASK     (15 << SYS_VCLKASRC_VCLKA1S_SHIFT)
+#  define SYS_VCLKASRC_VCLKA1S(n) ((uint32_t)(n) << SYS_VCLKASRC_VCLKA1S_SHIFT)
+
+/* Bits 8-11: VCLKA2 source */
+#define SYS_VCLKASRC_VCLKA2S_SHIFT (8)
+#define SYS_VCLKASRC_VCLKA2S_MASK     (15 << SYS_VCLKASRC_VCLKA2S_SHIFT)
+#  define SYS_VCLKASRC_VCLKA2S(n) ((uint32_t)(n) << SYS_VCLKASRC_VCLKA2S_SHIFT)
+
 /* Memory Self-Test / Hardware Init Global Control Registers (ECC RAM init) */
 
 /* Bits 0-3: Memory self-test global enable key */

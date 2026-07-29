@@ -28,4 +28,8 @@ else()
   list(APPEND SRCS rm57_userleds.c)
 endif()
 
+if(CONFIG_RM57_DCAN)
+  list(APPEND SRCS rm57_can.c)
+endif()
+
 target_sources(board PRIVATE ${SRCS})

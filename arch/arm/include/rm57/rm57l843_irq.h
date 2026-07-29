@@ -89,7 +89,9 @@
 #define RM57_REQ_DMAHBCA             39 /* DMA HBCA interrupt */
 #define RM57_REQ_DMABTCA             40 /* DMA BTCA interrupt */
 #define RM57_REQ_CAN2LOW             42 /* DCAN2 low level interrupt */
+#define RM57_REQ_CAN1IF3             44 /* DCAN1 IF3 interrupt */
 #define RM57_REQ_CAN3HIGH            45 /* DCAN3 high level interrupt */
+#define RM57_REQ_CAN2IF3             46 /* DCAN2 IF3 interrupt */
 #define RM57_REQ_MIBSPI4HIGH         49 /* MibSPI4 high level interrupt */
 #define RM57_REQ_ADC2GROUP0          50 /* ADC2 group 0 interrupt */
 #define RM57_REQ_ADC2GROUP1          51 /* ADC2 group 1 interrupt */
@@ -98,6 +100,7 @@
 #define RM57_REQ_CAN3LOW             55 /* DCAN3 low level interrupt */
 #define RM57_REQ_MIBSPI5LOW          56 /* MibSPI5 low level interrupt */
 #define RM57_REQ_ADC2GROUP2          57 /* ADC2 group 2 interrupt */
+#define RM57_REQ_CAN3IF3             60 /* DCAN3 IF3 interrupt */
 #define RM57_REQ_HET2HIGH            63 /* HET2 high level interrupt */
 #define RM57_REQ_SCI3HIGH            64 /* SCI3 high level interrupt */
 #define RM57_REQ_I2C                 66 /* I2C interrupt */
@@ -142,6 +145,7 @@
 #define RM57_REQ_CAN4LOW            117 /* DCAN4 low level interrupt */
 #define RM57_REQ_LIN2LOW            118 /* LIN2 low level interrupt */
 #define RM57_REQ_SCI4LOW            119 /* SCI4 low level interrupt */
+#define RM57_REQ_CAN4IF3            120 /* DCAN4 IF3 interrupt */
 #define RM57_REQ_CRC2               121 /* CRC2 interrupt */
 #define RM57_REQ_EPCFULL            124 /* EPC FIFO full interrupt */
 

@@ -44,6 +44,16 @@ ifeq ($(CONFIG_RM57_LIN),y)
 CHIP_CSRCS += rm57_lin.c
 endif
 
+ifeq ($(CONFIG_RM57_DCAN),y)
+CHIP_CSRCS += rm57_dcan.c
+ifeq ($(CONFIG_CAN),y)
+CHIP_CSRCS += rm57_dcan_chardev.c
+endif
+ifeq ($(CONFIG_NET_CAN),y)
+CHIP_CSRCS += rm57_dcan_sock.c
+endif
+endif
+
 # RM57 has no GIC - it uses the classic Hercules VIM interrupt controller
 
 CMN_CSRCS := $(filter-out arm_gicv2.c arm_gicv2_dump.c, $(CMN_CSRCS))

@@ -444,6 +444,24 @@
 #define DMA_REQ_GIOB_6                46 /* GIOB[6]; alt: DCAN4 IF2 */
 #define DMA_REQ_GIOB_7                47 /* GIOB[7]; alt: DCAN4 IF3 */
 
+/* DCAN interface DMA request aliases.  Each of these lines is shared with
+ * the MibSPI/NHET/ePWM/GIO sources named in the table above - the
+ * application must ensure only one source per DMAREQ line is enabled at
+ * any time (SPNS215C table 6-41).
+ */
+
+#define DMA_REQ_DCAN1_IF1             8  /* alt of DMA_REQ_MIBSPI1_4 */
+#define DMA_REQ_DCAN1_IF3             16 /* alt of DMA_REQ_MIBSPI1_8 */
+#define DMA_REQ_DCAN2_IF1             9  /* alt of DMA_REQ_MIBSPI1_5 */
+#define DMA_REQ_DCAN2_IF2             5  /* alt of DMA_REQ_MIBSPI1_3 */
+#define DMA_REQ_DCAN2_IF3             4  /* alt of DMA_REQ_MIBSPI1_2 */
+#define DMA_REQ_DCAN3_IF1             17 /* alt of DMA_REQ_MIBSPI1_9 */
+#define DMA_REQ_DCAN3_IF2             20 /* alt of DMA_REQ_NHET1_4 */
+#define DMA_REQ_DCAN3_IF3             21 /* alt of DMA_REQ_NHET1_5 */
+#define DMA_REQ_DCAN4_IF1             45 /* alt of DMA_REQ_EPWM7_SOCB */
+#define DMA_REQ_DCAN4_IF2             46 /* alt of DMA_REQ_GIOB_6 */
+#define DMA_REQ_DCAN4_IF3             47 /* alt of DMA_REQ_GIOB_7 */
+
 #define RM57_DMA_NCHANNELS             32
 #define RM57_DMA_NREQUESTS             48
 
