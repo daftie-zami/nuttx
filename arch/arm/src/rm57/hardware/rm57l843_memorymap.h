@@ -52,6 +52,10 @@
 #define RM57_GIO_BASE             0xfff7bc00 /* GIO (gioREG) */
 #define RM57_GIO_PORTA_BASE       0xfff7bc34 /* GIO Port A (gioPORTA) */
 #define RM57_GIO_PORTB_BASE       0xfff7bc54 /* GIO Port B (gioPORTB) */
+#define RM57_DCAN1_BASE           0xfff7dc00 /* DCAN1 (canREG1) */
+#define RM57_DCAN2_BASE           0xfff7de00 /* DCAN2 (canREG2) */
+#define RM57_DCAN3_BASE           0xfff7e000 /* DCAN3 (canREG3) */
+#define RM57_DCAN4_BASE           0xfff7e200 /* DCAN4 (canREG4) */
 #define RM57_SCI1_BASE            0xfff7e400 /* SCI1/LIN1 (sciREG1) */
 #define RM57_SCI1_PORT_BASE       0xfff7e440 /* SCI1 GIO port (sciPORT1) */
 #define RM57_SCI3_BASE            0xfff7e500 /* SCI3 (sciREG3) */
@@ -60,6 +64,16 @@
 #define RM57_SCI2_PORT_BASE       0xfff7e640 /* SCI2 GIO port (sciPORT2) */
 #define RM57_SCI4_BASE            0xfff7e700 /* SCI4 (sciREG4) */
 #define RM57_SCI4_PORT_BASE       0xfff7e740 /* SCI4 GIO port (sciPORT4) */
+
+/* DCAN message RAM.  Memory mapped only in Debug/Suspend or RAM Direct
+ * Access mode; normal accesses go through the DCAN IFx register sets
+ * (canRAM1-canRAM4 in HL_reg_can.h).
+ */
+
+#define RM57_DCAN4_RAM_BASE       0xff180000 /* DCAN4 mailbox RAM (canRAM4) */
+#define RM57_DCAN3_RAM_BASE       0xff1a0000 /* DCAN3 mailbox RAM (canRAM3) */
+#define RM57_DCAN2_RAM_BASE       0xff1c0000 /* DCAN2 mailbox RAM (canRAM2) */
+#define RM57_DCAN1_RAM_BASE       0xff1e0000 /* DCAN1 mailbox RAM (canRAM1) */
 
 /* System Modules Control Registers and Memories */
 

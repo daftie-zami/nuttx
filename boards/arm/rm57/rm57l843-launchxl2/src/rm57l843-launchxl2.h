@@ -70,4 +70,17 @@
 
 int rm57_bringup(void);
 
+/****************************************************************************
+ * Name: rm57_can_setup
+ *
+ * Description:
+ *   Register the enabled DCAN instances (character device and/or
+ *   SocketCAN, per the RM57_DCANn Kconfig choices).
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_RM57_DCAN
+int rm57_can_setup(void);
+#endif
+
 #endif /* __BOARDS_ARM_RM57_RM57L843_LAUNCHXL2_SRC_RM57L843_LAUNCHXL2_H */

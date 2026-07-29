@@ -197,6 +197,14 @@ static void rm57_map_clocks(void)
   putreg32(SYS_RCLKSRC_RTI1DIV_DIV2 | SYS_RCLKSRC_RTI1SRC(SYS_CLKSRC_VCLK),
            RM57_SYS_RCLKSRC);
 
+  /* Map VCLKA1 (DCAN CAN_CLK) and VCLKA2 to VCLK.  This is the reset
+   * default, but the DCAN bit timing depends on it - make it explicit.
+   */
+
+  putreg32(SYS_VCLKASRC_VCLKA2S(SYS_CLKSRC_VCLK) |
+           SYS_VCLKASRC_VCLKA1S(SYS_CLKSRC_VCLK),
+           RM57_SYS_VCLKASRC);
+
   /* Now that the PLLs are locked, switch the output dividers from their
    * max (slow) startup value to the final board.h value
    */

@@ -158,6 +158,262 @@ config RM57_SERIAL_RXDMA_POLL_HZ
 		interrupt at this rate, which checks one pointer per enabled
 		port and returns when nothing was received.
 
+config RM57_DCAN
+	bool
+	default n
+	---help---
+		Hidden umbrella symbol selected by any RM57_DCANn instance;
+		pulls the shared DCAN core driver into the build.
+
+menuconfig RM57_DCAN1
+	bool "DCAN1 CAN controller"
+	default n
+	select RM57_DCAN
+
+if RM57_DCAN1
+
+choice
+	prompt "DCAN1 driver framework"
+	default RM57_DCAN1_CHARDRIVER
+
+config RM57_DCAN1_CHARDRIVER
+	bool "Character device driver (/dev/canN)"
+	select CAN
+	select CAN_TXREADY
+	select CAN_USE_RTR
+	select ARCH_HAVE_CAN_ERRORS
+
+config RM57_DCAN1_SOCKET
+	bool "SocketCAN network driver"
+	depends on NET_CAN
+	select NET_CAN_HAVE_ERRORS
+
+endchoice # DCAN1 driver framework
+
+config RM57_DCAN1_BAUD
+	int "DCAN1 initial bit rate"
+	default 500000
+	range 1000 1000000
+
+choice
+	prompt "DCAN1 RX path"
+	default RM57_DCAN1_RX_PIO
+
+config RM57_DCAN1_RX_PIO
+	bool "IF2 programmed I/O (interrupt per message)"
+
+config RM57_DCAN1_RX_IF3IRQ
+	bool "IF3 auto-update with IF3 interrupt"
+
+config RM57_DCAN1_RX_IF3DMA
+	bool "IF3 auto-update with DMA (EXPERIMENTAL)"
+	depends on RM57_DMA && EXPERIMENTAL
+
+endchoice # DCAN1 RX path
+
+endif # RM57_DCAN1
+
+menuconfig RM57_DCAN2
+	bool "DCAN2 CAN controller"
+	default n
+	select RM57_DCAN
+
+if RM57_DCAN2
+
+choice
+	prompt "DCAN2 driver framework"
+	default RM57_DCAN2_CHARDRIVER
+
+config RM57_DCAN2_CHARDRIVER
+	bool "Character device driver (/dev/canN)"
+	select CAN
+	select CAN_TXREADY
+	select CAN_USE_RTR
+	select ARCH_HAVE_CAN_ERRORS
+
+config RM57_DCAN2_SOCKET
+	bool "SocketCAN network driver"
+	depends on NET_CAN
+	select NET_CAN_HAVE_ERRORS
+
+endchoice # DCAN2 driver framework
+
+config RM57_DCAN2_BAUD
+	int "DCAN2 initial bit rate"
+	default 500000
+	range 1000 1000000
+
+choice
+	prompt "DCAN2 RX path"
+	default RM57_DCAN2_RX_PIO
+
+config RM57_DCAN2_RX_PIO
+	bool "IF2 programmed I/O (interrupt per message)"
+
+config RM57_DCAN2_RX_IF3IRQ
+	bool "IF3 auto-update with IF3 interrupt"
+
+config RM57_DCAN2_RX_IF3DMA
+	bool "IF3 auto-update with DMA (EXPERIMENTAL)"
+	depends on RM57_DMA && EXPERIMENTAL
+
+endchoice # DCAN2 RX path
+
+endif # RM57_DCAN2
+
+menuconfig RM57_DCAN3
+	bool "DCAN3 CAN controller"
+	default n
+	select RM57_DCAN
+
+if RM57_DCAN3
+
+choice
+	prompt "DCAN3 driver framework"
+	default RM57_DCAN3_CHARDRIVER
+
+config RM57_DCAN3_CHARDRIVER
+	bool "Character device driver (/dev/canN)"
+	select CAN
+	select CAN_TXREADY
+	select CAN_USE_RTR
+	select ARCH_HAVE_CAN_ERRORS
+
+config RM57_DCAN3_SOCKET
+	bool "SocketCAN network driver"
+	depends on NET_CAN
+	select NET_CAN_HAVE_ERRORS
+
+endchoice # DCAN3 driver framework
+
+config RM57_DCAN3_BAUD
+	int "DCAN3 initial bit rate"
+	default 500000
+	range 1000 1000000
+
+choice
+	prompt "DCAN3 RX path"
+	default RM57_DCAN3_RX_PIO
+
+config RM57_DCAN3_RX_PIO
+	bool "IF2 programmed I/O (interrupt per message)"
+
+config RM57_DCAN3_RX_IF3IRQ
+	bool "IF3 auto-update with IF3 interrupt"
+
+config RM57_DCAN3_RX_IF3DMA
+	bool "IF3 auto-update with DMA (EXPERIMENTAL)"
+	depends on RM57_DMA && EXPERIMENTAL
+
+endchoice # DCAN3 RX path
+
+endif # RM57_DCAN3
+
+menuconfig RM57_DCAN4
+	bool "DCAN4 CAN controller"
+	default n
+	select RM57_DCAN
+	---help---
+		DCAN4 pins are shared with GIOB[2] (ball F2, CAN4 TX) and
+		GIOB[3] (ball W10, CAN4 RX).  The board pinmux claims them for
+		CAN when this option is enabled.
+
+if RM57_DCAN4
+
+choice
+	prompt "DCAN4 driver framework"
+	default RM57_DCAN4_CHARDRIVER
+
+config RM57_DCAN4_CHARDRIVER
+	bool "Character device driver (/dev/canN)"
+	select CAN
+	select CAN_TXREADY
+	select CAN_USE_RTR
+	select ARCH_HAVE_CAN_ERRORS
+
+config RM57_DCAN4_SOCKET
+	bool "SocketCAN network driver"
+	depends on NET_CAN
+	select NET_CAN_HAVE_ERRORS
+
+endchoice # DCAN4 driver framework
+
+config RM57_DCAN4_BAUD
+	int "DCAN4 initial bit rate"
+	default 500000
+	range 1000 1000000
+
+choice
+	prompt "DCAN4 RX path"
+	default RM57_DCAN4_RX_PIO
+
+config RM57_DCAN4_RX_PIO
+	bool "IF2 programmed I/O (interrupt per message)"
+
+config RM57_DCAN4_RX_IF3IRQ
+	bool "IF3 auto-update with IF3 interrupt"
+
+config RM57_DCAN4_RX_IF3DMA
+	bool "IF3 auto-update with DMA (EXPERIMENTAL)"
+	depends on RM57_DMA && EXPERIMENTAL
+
+endchoice # DCAN4 RX path
+
+endif # RM57_DCAN4
+
+if RM57_DCAN
+
+config RM57_DCAN_TXFIFO_DEPTH
+	int "DCAN TX FIFO depth (mailboxes per instance)"
+	default 8
+	range 1 32
+	---help---
+		Number of message objects reserved for transmission, taken
+		from the top of the 64-mailbox range so that RX filters keep
+		the (higher priority) low mailbox numbers.
+
+config RM57_DCAN_RXFIFO_DEPTH
+	int "DCAN RX FIFO depth (mailboxes per filter)"
+	default 8
+	range 1 32
+	---help---
+		Number of message objects chained (EoB) into the receive FIFO
+		of each acceptance filter, including the default catch-all
+		filter installed when no user filter is active.
+
+config RM57_DCAN_NFILTERS_MAX
+	int "DCAN maximum concurrent acceptance filters"
+	default 4
+	range 1 8
+
+config RM57_DCAN_IF3_NFRAMES
+	int "DCAN IF3 DMA ring size (frames)"
+	default 16
+	range 2 64
+	depends on RM57_DCAN1_RX_IF3DMA || RM57_DCAN2_RX_IF3DMA || \
+		RM57_DCAN3_RX_IF3DMA || RM57_DCAN4_RX_IF3DMA
+
+config RM57_DCAN_SECDED
+	bool "DCAN message RAM SECDED (ECC)"
+	default y
+	---help---
+		Keep the message RAM single-error-correction/double-error-
+		detection logic enabled (CTL.PMD).  Disable only for
+		bring-up debugging; parity events are reported through the
+		CAN error reporting path when enabled.
+
+config RM57_DCAN_LOOPBACK
+	bool "DCAN internal loopback at setup (self-test)"
+	default n
+	---help---
+		Enter internal loopback test mode (TEST.LBack) as part of
+		controller setup so the driver can be exercised without a
+		transceiver or bus.  Frames are looped back internally; the
+		CAN_TX pin stays recessive.  Can also be controlled at
+		runtime via CANIOC_SET_CONNMODES.
+
+endif # RM57_DCAN
+
 endmenu # RM57 Peripheral Support
 
 endif # ARCH_CHIP_RM57

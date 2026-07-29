@@ -30,4 +30,8 @@ else
   CSRCS += rm57_userleds.c
 endif
 
+ifeq ($(CONFIG_RM57_DCAN),y)
+  CSRCS += rm57_can.c
+endif
+
 include $(TOPDIR)/boards/Board.mk

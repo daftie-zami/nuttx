@@ -127,16 +127,32 @@
 #  define BOARD_PINMUX_SCI4
 #endif
 
+/* DCAN1-DCAN3 have dedicated balls (with on-board transceivers for DCAN1
+ * and DCAN2 on the LaunchPad).  DCAN4 shares ball F2 (TX) with GIOB[2]
+ * and ball W10 (RX) with GIOB[3]; claim them for CAN whenever DCAN4 is
+ * enabled.
+ */
+
+#ifdef CONFIG_RM57_DCAN4
+#  define BOARD_PINMUX_DCAN4 \
+  PINMUX_F2_DCAN4TX_PIN, \
+  PINMUX_W10_DCAN4RX_PIN,
+#else
+#  define BOARD_PINMUX_DCAN4
+#endif
+
 /* Left undefined when no multiplexed pin is in use, so that no pin-mux
  * table is generated at all.
  */
 
 #if defined(CONFIG_RM57_SCI2) || defined(CONFIG_RM57_LIN) || \
-    defined(CONFIG_RM57_SCI3) || defined(CONFIG_RM57_SCI4)
+    defined(CONFIG_RM57_SCI3) || defined(CONFIG_RM57_SCI4) || \
+    defined(CONFIG_RM57_DCAN4)
 #  define BOARD_PINMUX_INITIALIZER \
   BOARD_PINMUX_LIN2 \
   BOARD_PINMUX_SCI3 \
-  BOARD_PINMUX_SCI4
+  BOARD_PINMUX_SCI4 \
+  BOARD_PINMUX_DCAN4
 #endif
 
 /* LED definitions **********************************************************/
