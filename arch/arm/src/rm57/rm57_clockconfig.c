@@ -127,6 +127,26 @@ static void rm57_periph_init(void)
   putreg32(0xffffffff, RM57_PCR1_PSPWRDWNCLR2);
   putreg32(0xffffffff, RM57_PCR1_PSPWRDWNCLR3);
 
+  /* Power up all peripherals on PCR frames 2 and 3.  Frame 1 alone does
+   * not cover every peripheral on this device - EMAC/EMAC Control/MDIO
+   * and the Ethernet CPPI RAM sit under PCR2 (see hardware/rm57_pcr.h);
+   * powering up all three frames unconditionally matches HALCoGen's
+   * HL_system.c and costs nothing when the peripherals they gate are
+   * unused.
+   */
+
+  putreg32(0xffffffff, RM57_PCR2_PSPWRDWNCLR0);
+  putreg32(0xffffffff, RM57_PCR2_PSPWRDWNCLR1);
+  putreg32(0xffffffff, RM57_PCR2_PSPWRDWNCLR2);
+  putreg32(0xffffffff, RM57_PCR2_PSPWRDWNCLR3);
+  putreg32(0xffffffff, RM57_PCR2_PCSPWRDWNCLR0);
+  putreg32(0xffffffff, RM57_PCR2_PCSPWRDWNCLR1);
+
+  putreg32(0xffffffff, RM57_PCR3_PSPWRDWNCLR0);
+  putreg32(0xffffffff, RM57_PCR3_PSPWRDWNCLR1);
+  putreg32(0xffffffff, RM57_PCR3_PSPWRDWNCLR2);
+  putreg32(0xffffffff, RM57_PCR3_PSPWRDWNCLR3);
+
   /* Enable peripherals */
 
   regval = getreg32(RM57_SYS_CLKCNTL);
@@ -204,6 +224,21 @@ static void rm57_map_clocks(void)
   putreg32(SYS_VCLKASRC_VCLKA2S(SYS_CLKSRC_VCLK) |
            SYS_VCLKASRC_VCLKA1S(SYS_CLKSRC_VCLK),
            RM57_SYS_VCLKASRC);
+
+#ifdef CONFIG_RM57_EMAC
+  /* Map VCLK3 (EMAC MDIO module's clock divider input) and VCLKA4
+   * (VCLKA4_DIVR_EMAC, the EMAC's internal logic clock) from the
+   * BOARD_VCLK3_DIV/BOARD_VCLKA4_SRC/BOARD_VCLKA4_DIV constants in
+   * board.h.  See board.h for the MII/RMII frequency requirements and
+   * the caveat on the RMII (PLL2-sourced) case.
+   */
+
+  putreg32(SYS2_CLK2CNTRL_VCLK3R(BOARD_VCLK3_DIV), RM57_SYS2_CLK2CNTRL);
+
+  putreg32(SYS2_VCLKACON1_VCLKA4R(BOARD_VCLKA4_DIV) |
+           SYS2_VCLKACON1_VCLKA4S(BOARD_VCLKA4_SRC),
+           RM57_SYS2_VCLKACON1);
+#endif
 
   /* Now that the PLLs are locked, switch the output dividers from their
    * max (slow) startup value to the final board.h value

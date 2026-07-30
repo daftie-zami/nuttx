@@ -197,6 +197,8 @@
 
 #define RM57_SYS2_PLLCTL3 (RM57_SYS2_BASE + RM57_SYS2_PLLCTL3_OFFSET)
 #define RM57_SYS2_STCCLKDIV (RM57_SYS2_BASE + RM57_SYS2_STCCLKDIV_OFFSET)
+#define RM57_SYS2_CLK2CNTRL (RM57_SYS2_BASE + RM57_SYS2_CLK2CNTRL_OFFSET)
+#define RM57_SYS2_VCLKACON1 (RM57_SYS2_BASE + RM57_SYS2_VCLKACON1_OFFSET)
 #define RM57_SYS2_HCLKCNTL (RM57_SYS2_BASE + RM57_SYS2_HCLKCNTL_OFFSET)
 
 /* Register Bit-Field Definitions *******************************************/
@@ -222,7 +224,10 @@
 #define SYS_CDDIS_VCLKPOFF (1 << 2)
 #define SYS_CDDIS_VCLK2OFF           (1 << 3)  /* Bit 3: VCLK2 domain off */
 #define SYS_CDDIS_VCLKA1OFF          (1 << 4)  /* Bit 4: VCLKA1 domain off */
+#define SYS_CDDIS_VCLKA2OFF          (1 << 5)  /* Bit 5: VCLKA2 domain off */
 #define SYS_CDDIS_RTICLK1OFF         (1 << 6)  /* Bit 6: RTICLK1 domain off */
+#define SYS_CDDIS_VCLK3OFF           (1 << 8)  /* Bit 8: VCLK3 domain off (EMAC MDIO bus clock) */
+#define SYS_CDDIS_VCLKA4OFF          (1 << 11) /* Bit 11: VCLKA4 domain off (EMAC clock) */
 
 /* GCLK, HCLK, VCLK, VCLK2 Source Register clock source aliases */
 
@@ -279,6 +284,44 @@
 #define SYS_VCLKASRC_VCLKA2S_SHIFT (8)
 #define SYS_VCLKASRC_VCLKA2S_MASK     (15 << SYS_VCLKASRC_VCLKA2S_SHIFT)
 #  define SYS_VCLKASRC_VCLKA2S(n) ((uint32_t)(n) << SYS_VCLKASRC_VCLKA2S_SHIFT)
+
+/* Clock 2 Control Register (CLK2CNTRL).  Only the VCLK3 ratio field is
+ * implemented on this device; bits 11-4 are reserved (HALCoGen writes a
+ * fixed pattern there for family-wide compatibility, but SPNU562A
+ * documents them as reserved on this part).
+ */
+
+/* Bits 0-3: VCLK3 ratio (VCLK3 = HCLK / (n + 1)).  VCLK3 clocks the
+ * EMAC MDIO module's clock divider input.
+ */
+#define SYS2_CLK2CNTRL_VCLK3R_SHIFT (0)
+#define SYS2_CLK2CNTRL_VCLK3R_MASK    (15 << SYS2_CLK2CNTRL_VCLK3R_SHIFT)
+#  define SYS2_CLK2CNTRL_VCLK3R(n) ((uint32_t)(n) << SYS2_CLK2CNTRL_VCLK3R_SHIFT)
+
+/* Peripheral Asynchronous Clock Configuration 1 Register (VCLKACON1).
+ * Only the VCLKA4 fields (bits 26-16) are implemented on this device;
+ * bits 15-0 are reserved (this register's lower half carries a VCLKA3
+ * domain on other Hercules family members, but RM57L843 has no VCLKA3).
+ * VCLKA4_DIVR is the EMAC's internal logic clock (VCLKA4_DIVR_EMAC in
+ * SPNS215 Section 6.6.3): MII requires 25MHz, RMII requires 50MHz.
+ */
+
+/* Bits 19-16: VCLKA4 source.  Values 0-7 select clock source0-7 (see
+ * SYS_CLKSRC_* aliases above); values 8h-Fh all select VCLK or a divided
+ * VCLK per the device-specific data manual (SPNS215 Table 6-17: 0x8-0xD
+ * = VCLK, 0xE = PLL2 post_ODCLK/8, 0xF = PLL2 post_ODCLK/16).
+ */
+#define SYS2_VCLKACON1_VCLKA4S_SHIFT (16)
+#define SYS2_VCLKACON1_VCLKA4S_MASK   (15 << SYS2_VCLKACON1_VCLKA4S_SHIFT)
+#  define SYS2_VCLKACON1_VCLKA4S(n) ((uint32_t)(n) << SYS2_VCLKACON1_VCLKA4S_SHIFT)
+
+/* Bit 20: disable the prescaled VCLKA4 clock on VCLKA4_DIVR */
+#define SYS2_VCLKACON1_VCLKA4_DIV_CDDIS (1 << 20)
+
+/* Bits 26-24: VCLKA4 divider (VCLKA4_DIVR = VCLKA4 / (n + 1)) */
+#define SYS2_VCLKACON1_VCLKA4R_SHIFT (24)
+#define SYS2_VCLKACON1_VCLKA4R_MASK   (7 << SYS2_VCLKACON1_VCLKA4R_SHIFT)
+#  define SYS2_VCLKACON1_VCLKA4R(n) ((uint32_t)(n) << SYS2_VCLKACON1_VCLKA4R_SHIFT)
 
 /* Memory Self-Test / Hardware Init Global Control Registers (ECC RAM init) */
 

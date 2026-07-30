@@ -564,33 +564,10 @@ int rm57_dcan_sock_initialize(int n)
   return OK;
 }
 
-/****************************************************************************
- * Name: arm_netinitialize
- *
- * Description:
- *   Register the SocketCAN-configured DCAN instances at network
- *   initialization time (self-registration, as the FlexCAN drivers
- *   do).  With CONFIG_NETDEV_LATEINIT the board's rm57_can_setup()
- *   performs the registration instead.
- *
- ****************************************************************************/
-
-#ifndef CONFIG_NETDEV_LATEINIT
-void arm_netinitialize(void)
-{
-#ifdef CONFIG_RM57_DCAN1_SOCKET
-  rm57_dcan_sock_initialize(0);
-#endif
-#ifdef CONFIG_RM57_DCAN2_SOCKET
-  rm57_dcan_sock_initialize(1);
-#endif
-#ifdef CONFIG_RM57_DCAN3_SOCKET
-  rm57_dcan_sock_initialize(2);
-#endif
-#ifdef CONFIG_RM57_DCAN4_SOCKET
-  rm57_dcan_sock_initialize(3);
-#endif
-}
-#endif /* !CONFIG_NETDEV_LATEINIT */
+/* arm_netinitialize() (which self-registers this frontend's instances
+ * when !CONFIG_NETDEV_LATEINIT) now lives in rm57_netinitialize.c, which
+ * is also the EMAC driver's registration point - a single file must own
+ * this symbol.  See that file for the registration list.
+ */
 
 #endif /* CONFIG_RM57_DCAN && CONFIG_NET_CAN */

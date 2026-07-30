@@ -12,14 +12,15 @@ than any particular application.
 
 .. warning::
 
-   This board port is new and experimental. Only the serial console
-   (SCI1), the two user LEDs, and the DMA controller are currently
-   supported; pin-mux configuration, button support, and most on-chip
+   This board port is new and experimental. The serial console (SCI1),
+   the two user LEDs, the DMA controller, DCAN, and EMAC/MDIO (Ethernet)
+   are currently supported; button support and most other on-chip
    peripherals are not yet implemented. Some of the values documented
-   below (PLL/clock configuration, LED polarity, JTAG IDCODE) were taken
-   from TI's HALCoGen-generated reference project or from the RM57L843
-   datasheet rather than confirmed against this specific board's
-   schematic — see the comments in
+   below (PLL/clock configuration, LED polarity, JTAG IDCODE, and for
+   Ethernet the exact PHY ball assignments and RMII clock source) were
+   taken from TI's HALCoGen-generated reference project or from the
+   RM57L843 datasheet rather than confirmed against this specific
+   board's schematic — see the comments in
    ``boards/arm/rm57/rm57l843-launchxl2/include/board.h`` for details.
 
 Features
@@ -87,6 +88,27 @@ Only the pins used by the currently supported peripherals are listed.
    * - F1
      - GIOB[7]
      - User LED B7
+   * - V5 / G3
+     - MDIO_CLK / MDIO_D
+     - MDIO bus shared by the EMAC's PHY (DP83640, address 1)
+   * - D19 / E18 / R2 / J19 / J18
+     - MII_TX_CLK / MII_TXD[3:0]
+     - EMAC transmit, MII mode
+   * - H19 / F3 / B4
+     - MII_TXEN / MII_COL / MII_CRS
+     - EMAC transmit control, MII mode
+   * - K19 / H18 / G19 / A14 / P1 / B11 / N19
+     - MII_RXCLK / MII_RXD[3:0] / MII_RX_DV / MII_RX_ER
+     - EMAC receive, MII mode
+
+.. note::
+
+   The EMAC/MDIO ball assignments above are this port's default choice
+   among two alternate-ball options the RM57L843 offers for nearly every
+   MII signal (see the ``BOARD_PINMUX_EMAC`` comment in ``board.h``) and
+   are **not** independently confirmed against the LAUNCHXL2-RM57L
+   schematic. RMII mode uses a smaller subset of these balls (see
+   ``board.h``) plus K19 as the RMII 50MHz reference clock input.
 
 .. note::
 
@@ -180,3 +202,21 @@ console input from stalling behind that threshold, RTI compare 1 calls
 (1 kHz here), bounding the extra latency by one poll period. Both the
 console and the test ports therefore behave the same as in ``scitest``,
 only with the transfers themselves done by DMA.
+
+eth
+---
+
+NuttShell plus the EMAC (``CONFIG_RM57_EMAC=y``, MII mode, DP83640 PHY
+at address 1), with the full IPv4 stack (TCP/UDP/ICMP/ARP),
+``CONFIG_NETDEV_LATEINIT`` (so board bring-up can derive a real,
+die-ID-based MAC address before registering the interface - see
+`EMAC/MDIO (Ethernet) <#emac-mdio-ethernet>`_ on the chip documentation
+page), NSH's automatic network initialization
+(``CONFIG_NSH_NETINIT``, DHCP by default), and the ``ping`` utility::
+
+    nsh> ifconfig
+    nsh> ping 192.168.1.1
+
+If the network doesn't come up automatically, check ``ifconfig eth0``
+for the assigned address and bring the link up manually with
+``ifup eth0`` / ``ifdown eth0``.

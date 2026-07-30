@@ -414,6 +414,104 @@ config RM57_DCAN_LOOPBACK
 
 endif # RM57_DCAN
 
+menuconfig RM57_EMAC
+	bool "Ethernet MAC (EMAC/MDIO)"
+	default n
+	select NETDEVICES
+	select ARCH_HAVE_PHY
+	select ARCH_HAVE_NETDEV_STATISTICS
+	depends on ARCH_CHIP_RM57L843
+	---help---
+		TI CPSW-lite 10/100 Ethernet MAC, EMAC Control module and
+		MDIO module.  There is exactly one EMAC on this device.
+
+if RM57_EMAC
+
+choice
+	prompt "PHY interface mode"
+	default RM57_EMAC_MII
+	---help---
+		The LAUNCHXL2-RM57L carries a DP83640 PHY wired for MII; the
+		reset default IOMM selection is RMII, so MII must be
+		explicitly selected here to match that board.
+
+config RM57_EMAC_MII
+	bool "MII"
+
+config RM57_EMAC_RMII
+	bool "RMII"
+	---help---
+		See the BOARD_VCLKA4_* comment in the board's board.h: this
+		port does not independently verify the PLL2-derived 50MHz
+		clock RMII requires and it should be measured on real
+		hardware before relying on this mode.
+
+endchoice # PHY interface mode
+
+config RM57_EMAC_PHYADDR
+	int "PHY address"
+	default 1
+	range 0 31
+
+config RM57_EMAC_NTXDESC
+	int "Number of TX descriptors"
+	default 8
+	range 2 128
+
+config RM57_EMAC_NRXDESC
+	int "Number of RX descriptors"
+	default 16
+	range 2 128
+
+config RM57_EMAC_MDIO_FREQ
+	int "MDIO clock (Hz)"
+	default 1000000
+	range 100000 2500000
+	---help---
+		SPNU562A Section 31.2.1: typical operation is 1MHz; the MDIO
+		module is specified to run up to 2.5MHz.
+
+config RM57_EMAC_AUTONEG
+	bool "Autonegotiation"
+	default y
+
+config RM57_EMAC_ETHFD
+	bool "Full duplex"
+	default n
+	depends on !RM57_EMAC_AUTONEG
+
+config RM57_EMAC_ETH100MBPS
+	bool "100 Mbps"
+	default n
+	depends on !RM57_EMAC_AUTONEG
+
+config RM57_EMAC_PHY_INTERRUPT
+	bool "PHY link-change interrupt (MDIO LINKINT0)"
+	default y
+	select ARCH_PHY_INTERRUPT
+	---help---
+		Enables SIOCMIINOTIFY / phy_notify support.  This driver
+		always enables the underlying MDIO link-change interrupt for
+		its own netdev_carrier_on/off tracking regardless of this
+		setting; this option only gates whether a phy_notify
+		subscriber can also attach to link events.
+
+config RM57_EMAC_LOOPBACK
+	bool "MAC internal loopback at ifup (self-test)"
+	default n
+	---help---
+		Set MACCONTROL.LOOPBACK and skip the PHY link wait entirely,
+		so the descriptor ring and interrupt path can be exercised
+		standalone without a PHY or cable - the RM57_DCAN_LOOPBACK
+		equivalent for Ethernet.
+
+config RM57_EMAC_REGDEBUG
+	bool "Register-level debug"
+	default n
+	depends on DEBUG_NET_INFO
+
+endif # RM57_EMAC
+
 endmenu # RM57 Peripheral Support
 
 endif # ARCH_CHIP_RM57

@@ -185,6 +185,40 @@
 #define MII_DP83848C_CDCTRL1         0x1b      /* RW CD Test Control Register and BIST Extensions Register */
 #define MII_DP83848C_EDCR            0x1d      /* RW Energy Detect Control Register */
 
+/* Texas Instruments DP83640 PHY Extended Registers.
+ *
+ * The DP83640 (10/100 PHY with IEEE 1588 hardware timestamping) shares
+ * its base extended-register layout with the DP83848C family per TI's
+ * documentation; PHYSTS/MICR/MISR/PHYCR/RBR/LEDCR/10BTSCR below mirror
+ * that block.  TXTS/RXTS (the PTP transmit/receive timestamp FIFOs) are
+ * DP83640-specific and are not otherwise implemented by this port -
+ * placeholder addresses only, taken from TI's HALCoGen
+ * HL_phy_dp83640.h (PHY_TXTS/PHY_RXTS).
+ */
+
+#define MII_DP83640_NAME              "DP83640"
+#define MII_DP83640_PHYSTS            0x10      /* RO PHY Status Register */
+#define MII_DP83640_MICR              0x11      /* RW MII Interrupt Control Register */
+#define MII_DP83640_MISR              0x12      /* RO MII Interrupt Status Register */
+#define MII_DP83640_RBR               0x17      /* RW RMII and Bypass Register */
+#define MII_DP83640_LEDCR             0x18      /* RW LED Direct Control Register */
+#define MII_DP83640_PHYCR             0x19      /* RW PHY Control Register */
+#define MII_DP83640_10BTSCR           0x1a      /* RW 10Base-T Status/Control Register */
+#define MII_DP83640_TXTS              0x1c      /* RO PTP Tx Timestamp (HALCoGen PHY_TXTS) */
+#define MII_DP83640_RXTS              0x1d      /* RO PTP Rx Timestamp (HALCoGen PHY_RXTS) */
+
+/* Texas Instruments TLK111 PHY Extended Registers.
+ *
+ * TLK111 exposes only the strap-override registers beyond the standard
+ * MII set; addresses taken from TI's HALCoGen HL_phy_tlk111.h
+ * (PHY_SWSCR1/2/3).
+ */
+
+#define MII_TLK111_NAME               "TLK111"
+#define MII_TLK111_SWSCR1             0x09      /* RW Software Strap Control Register 1 */
+#define MII_TLK111_SWSCR2             0x0a      /* RW Software Strap Control Register 2 */
+#define MII_TLK111_SWSCR3             0x0b      /* RW Software Strap Control Register 3 */
+
 /* Texas Instruments DP83825I PHY Extended Registers. */
 
 #define MII_DP83825I_NAME            "DP83825I"
@@ -409,6 +443,29 @@
 
 #define MII_PHYID1_DP83848C          0x2000    /* ID1 value for DP83848C */
 #define MII_PHYID2_DP83848C          0x5c90    /* ID2 value for DP83848C */
+
+/* Texas Instruments DP83640 *************************************************/
+
+/* DP83640 MII ID1/2 register bits.  Taken as-is from TI's HALCoGen
+ * HL_phy_dp83640.h DP83640_PHY_ID (0x0007c0f0), split the same way the
+ * vendor driver combines them: id = (id1 << 16) | id2.  Mask off the
+ * low 4 bits of id2 (DP83640_PHY_ID_REV_MASK) when comparing, since
+ * those encode the silicon revision.
+ */
+
+#define MII_PHYID1_DP83640           0x0007    /* ID1 value for DP83640 */
+#define MII_PHYID2_DP83640           0xc0f0    /* ID2 value for DP83640 (rev in bits 3-0) */
+#define MII_PHYID2_DP83640_REV_MASK  0x000f
+
+/* Texas Instruments TLK111 ***************************************************/
+
+/* TLK111 MII ID1/2 register bits, from TI's HALCoGen HL_phy_tlk111.h
+ * Tlk111_PHY_ID (0x2000a212).
+ */
+
+#define MII_PHYID1_TLK111            0x2000    /* ID1 value for TLK111 */
+#define MII_PHYID2_TLK111            0xa212    /* ID2 value for TLK111 (rev in bits 3-0) */
+#define MII_PHYID2_TLK111_REV_MASK   0x000f
 
 /* RMII and Bypass Register (0x17) */
 

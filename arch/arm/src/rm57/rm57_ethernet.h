@@ -1,5 +1,5 @@
 /****************************************************************************
- * boards/arm/rm57/rm57l843-launchxl2/src/rm57_bringup.c
+ * arch/arm/src/rm57/rm57_ethernet.h
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -20,45 +20,59 @@
  *
  ****************************************************************************/
 
+#ifndef __ARCH_ARM_SRC_RM57_RM57_ETHERNET_H
+#define __ARCH_ARM_SRC_RM57_RM57_ETHERNET_H
+
 /****************************************************************************
  * Included Files
  ****************************************************************************/
 
 #include <nuttx/config.h>
 
-#include <sys/types.h>
-
-#include "rm57l843-launchxl2.h"
+#include <stdint.h>
 
 /****************************************************************************
- * Public Functions
+ * Public Function Prototypes
  ****************************************************************************/
 
+#ifdef __cplusplus
+#define EXTERN extern "C"
+extern "C"
+{
+#else
+#define EXTERN extern
+#endif
+
+#ifdef CONFIG_RM57_EMAC
+
 /****************************************************************************
- * Name: rm57_bringup
+ * Name: rm57_ethinitialize
  *
  * Description:
- *   Bring up board features.
+ *   Initialize the RM57L843 EMAC driver and register it with the network
+ *   stack as "eth<intf>".  There is exactly one EMAC on this device, so
+ *   intf is always 0; the parameter exists for API symmetry with other
+ *   NuttX MAC drivers.
+ *
+ * Input Parameters:
+ *   intf    - Interface number, always 0 on this device.
+ *   macaddr - 6-byte MAC address to program, or NULL to use a fixed
+ *             locally-administered placeholder address (02:00:00:00:00:01).
+ *             Board bring-up code should normally pass a real address
+ *             derived from the device's unique ID (RM57_SYS_DIEIDL/H).
+ *
+ * Returned Value:
+ *   OK on success; a negated errno value on failure.
  *
  ****************************************************************************/
 
-int rm57_bringup(void)
-{
-#ifdef CONFIG_RM57_DCAN
-  int ret = rm57_can_setup();
-  if (ret < 0)
-    {
-      return ret;
-    }
-#endif
+int rm57_ethinitialize(int intf, FAR const uint8_t *macaddr);
 
-#if defined(CONFIG_RM57_EMAC) && defined(CONFIG_NETDEV_LATEINIT)
-  int eth_ret = rm57_eth_setup();
-  if (eth_ret < 0)
-    {
-      return eth_ret;
-    }
-#endif
+#endif /* CONFIG_RM57_EMAC */
 
-  return OK;
+#undef EXTERN
+#ifdef __cplusplus
 }
+#endif
+
+#endif /* __ARCH_ARM_SRC_RM57_RM57_ETHERNET_H */

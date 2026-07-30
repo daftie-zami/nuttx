@@ -12,10 +12,11 @@ NuttX currently supports the **RM57L843** part.
 .. warning::
 
    Support for this chip family is new and experimental. Only the
-   SCI/LIN (serial), DMA, and GIO (LED) peripherals have been brought up
-   so far; the PLL/clock configuration values, JTAG IDCODE, and LED
-   polarity have not all been independently confirmed against
-   hardware/schematics. See the
+   SCI/LIN (serial), DMA, GIO (LED), DCAN, and EMAC/MDIO (Ethernet)
+   peripherals have been brought up so far; the PLL/clock configuration
+   values, JTAG IDCODE, LED polarity, and (for Ethernet) the exact PHY
+   pin assignments and RMII clock source have not all been independently
+   confirmed against hardware/schematics. See the
    :doc:`board documentation <boards/rm57l843-launchxl2/index>` for
    details.
 
@@ -46,6 +47,10 @@ DCAN           All four DCAN (Bosch D_CAN, CAN 2.0A/B) controllers
                (``canN``); both frontends can coexist in one image on
                different instances. See `DCAN`_ below.
 GIO            General purpose I/O, used for LEDs
+EMAC           10/100 Ethernet MAC + EMAC Control module + MDIO
+               (``CONFIG_RM57_EMAC``). Single netdev interface (``eth0``),
+               MII or RMII (``RM57_EMAC_MII`` / ``RM57_EMAC_RMII``). See
+               `EMAC/MDIO (Ethernet)`_ below.
 ============== =====
 
 .. todo::
@@ -135,6 +140,76 @@ SCI3             30         31
 SCI2/LIN2        40         41
 SCI4             42         43
 ================ ========== ==========
+
+EMAC/MDIO (Ethernet)
+=====================
+
+The RM57L843 has a single 10/100 Ethernet MAC built from three sub-blocks
+(SPNU562A chapter 31): the EMAC module itself (TX/RX CPPI DMA engines,
+statistics, MAC address/hash filtering), the EMAC Control module (VIM
+interrupt pacing/routing), and the MDIO module (a shared PHY management
+bus, independent of the MAC). ``CONFIG_RM57_EMAC`` enables all three
+together and registers one ``netdev_register()`` interface
+(``NET_LL_ETHERNET``) - there is no separate character-device frontend,
+unlike DCAN.
+
+Descriptor rings (TX: ``CONFIG_RM57_EMAC_NTXDESC``, default 8; RX:
+``CONFIG_RM57_EMAC_NRXDESC``, default 16) live in the EMAC's internal 8KB
+CPPI RAM, which this port's MPU maps as non-cacheable device memory, so
+descriptor fields need no cache maintenance. Packet buffers are ordinary
+cacheable SRAM; TX uses a small zero-copy free-buffer pool (buffers are
+swapped into ``dev->d_buf``, not copied) while RX buffers are fixed 1:1
+with RX descriptors and processed synchronously in place. Both rings are
+managed as CPPI "append to a running queue" chains (SPNU562A Section
+31.2.6.2), including the documented EOQ-race recovery for restarting a
+channel that halted between the driver reading its tail and appending a
+new descriptor.
+
+``CONFIG_RM57_EMAC_MII`` / ``CONFIG_RM57_EMAC_RMII`` select the PHY
+interface mode; the LAUNCHXL2-RM57L's DP83640 PHY is wired for MII, while
+the IOMM reset default is RMII, so MII must be explicitly selected to
+match that board. The EMAC's internal logic clock (``VCLKA4_DIVR_EMAC``)
+must be exactly 25MHz for MII or 50MHz for RMII (SPNS215 Section 6.6.3);
+see the ``BOARD_VCLKA4_*`` comment in the board's ``board.h`` for how
+each mode's clock is derived and the caveat on the RMII (PLL2-sourced)
+path, which this port has not independently verified against real
+hardware.
+
+The MDIO module addresses up to 32 PHYs (``CONFIG_RM57_EMAC_PHYADDR``,
+default 1) over a single-transaction register interface
+(``USERACCESS0``), and generates a link-change interrupt
+(``LINKINT0``, routed through the ``C0_MISC_PULSE`` VIM channel) that
+this driver always keeps enabled for its own ``netdev_carrier_on/off``
+tracking; ``CONFIG_RM57_EMAC_PHY_INTERRUPT`` additionally exposes that
+event to userspace via ``SIOCMIINOTIFY``/``phy_notify``.
+``CONFIG_RM57_EMAC_AUTONEG`` (default) negotiates speed/duplex; disabling
+it forces the mode selected by ``CONFIG_RM57_EMAC_ETHFD`` /
+``CONFIG_RM57_EMAC_ETH100MBPS``. ``CONFIG_RM57_EMAC_LOOPBACK`` sets
+``MACCONTROL.LOOPBACK`` and skips the PHY link wait entirely, so the
+descriptor ring and interrupt path can be exercised standalone without a
+PHY or cable - the Ethernet equivalent of ``RM57_DCAN_LOOPBACK``.
+
+Multicast group membership (``CONFIG_NET_MCASTGROUP``) is implemented via
+the EMAC's 64-bit hash address table (SPNU562A Section 31.5.37, 6-bit
+XOR-fold of the destination address), with a per-bit reference count
+since two joined addresses can hash to the same bit.
+
+The four EMAC Control module interrupt pulses this device routes to the
+VIM (SPNS215 Table 6-39) are, in channel order: ``C0_MISC_PULSE`` (76,
+statistics/host-error/MDIO events), ``C0_TX_PULSE`` (77, TX completion),
+``C0_THRESH_PULSE`` (78, RX flow-control threshold - not used by this
+driver), ``C0_RX_PULSE`` (79, RX completion). Each ISR follows the
+disable-service-acknowledge-reenable discipline SPNU562A Section
+31.2.17.3 documents: the top-half clears the relevant EMAC Control
+enable bit and defers to the low-priority work queue, which does the
+real work, writes the ``MACEOIVECTOR`` acknowledge key, then re-enables
+the source last.
+
+The ``eth`` board configuration (``CONFIG_NETDEV_LATEINIT``) derives a
+locally-administered MAC address from the device's unique die ID at
+board bring-up; without ``CONFIG_NETDEV_LATEINIT`` the interface
+self-registers via ``arm_netinitialize()`` with a fixed placeholder
+address (``02:00:00:00:00:01``) instead.
 
 Supported Boards
 =================

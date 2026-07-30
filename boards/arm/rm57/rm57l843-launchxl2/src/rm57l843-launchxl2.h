@@ -83,4 +83,18 @@ int rm57_bringup(void);
 int rm57_can_setup(void);
 #endif
 
+/****************************************************************************
+ * Name: rm57_eth_setup
+ *
+ * Description:
+ *   Derive a locally-administered MAC address from the device's unique
+ *   die ID and register the EMAC driver.  Only built/called under
+ *   CONFIG_NETDEV_LATEINIT - see src/rm57_ethernet.c.
+ *
+ ****************************************************************************/
+
+#if defined(CONFIG_RM57_EMAC) && defined(CONFIG_NETDEV_LATEINIT)
+int rm57_eth_setup(void);
+#endif
+
 #endif /* __BOARDS_ARM_RM57_RM57L843_LAUNCHXL2_SRC_RM57L843_LAUNCHXL2_H */
