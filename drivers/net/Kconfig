@@ -600,6 +600,12 @@ config ETH0_PHY_DP83848C
 config ETH0_PHY_DP83825I
 	bool "Texas Instruments DP83825I PHY"
 
+config ETH0_PHY_DP83640
+	bool "Texas Instruments DP83640 PHY"
+
+config ETH0_PHY_TLK111
+	bool "Texas Instruments TLK111 PHY"
+
 config ETH0_PHY_TJA1100
 	bool "NXP TJA1100 PHY"
 	select ARCH_PHY_100BASE_T1

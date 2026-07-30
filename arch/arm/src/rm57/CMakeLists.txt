@@ -54,4 +54,12 @@ if(CONFIG_RM57_DCAN)
   endif()
 endif()
 
+if(CONFIG_RM57_EMAC)
+  list(APPEND SRCS rm57_ethernet.c rm57_mdio.c)
+endif()
+
+if(CONFIG_NET AND NOT CONFIG_NETDEV_LATEINIT)
+  list(APPEND SRCS rm57_netinitialize.c)
+endif()
+
 target_sources(arch PRIVATE ${SRCS})

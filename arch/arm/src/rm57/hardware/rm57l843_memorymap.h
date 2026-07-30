@@ -99,4 +99,15 @@
 #define RM57_ECLK_PORT_BASE       0xffffff04 /* ECLK GIO port (systemPORT) */
 #define RM57_DMA_BASE             0xfffff000 /* DMA control registers (dmaREG) */
 
+/* Ethernet (EMAC / EMAC Control / MDIO).  These live under PCR2's PS[29]-
+ * PS[31] segments and the CPPI RAM under PCR2's PCS[41] segment - outside
+ * every other peripheral base in this file, which is why they are not
+ * grouped with the PCR1-gated peripherals above.
+ */
+
+#define RM57_EMAC_CPPI_RAM_BASE   0xfc520000 /* Ethernet CPPI descriptor RAM */
+#define RM57_EMAC_BASE            0xfcf78000 /* EMAC (emacREG) */
+#define RM57_EMAC_CTRL_BASE       0xfcf78800 /* EMAC Control (emacCtrlReg) */
+#define RM57_MDIO_BASE            0xfcf78900 /* MDIO (mdioREG) */
+
 #endif /* __ARCH_ARM_SRC_RM57_HARDWARE_RM57L843_MEMORYMAP_H */

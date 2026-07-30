@@ -112,8 +112,18 @@
  * phrasing does not fit SCI2/LIN2, which is a full dual-role module).
  */
 #define RM57_REQ_SCI3LOW             74 /* SCI3 low level interrupt */
-#define RM57_REQ_EMACTX              77 /* EMAC Tx interrupt */
-#define RM57_REQ_EMACRX              79 /* EMAC Rx interrupt */
+
+/* Channels 76-79 are the four EMAC Control Module interrupt pulses
+ * (SPNS215 Table 6-39): C0_MISC_PULSE, C0_TX_PULSE, C0_THRESH_PULSE and
+ * C0_RX_PULSE, in that channel order.  C0_MISC_PULSE carries STATPEND,
+ * HOSTPEND and both MDIO interrupts (LINKINT0, USERINT0); see
+ * hardware/rm57_ethernet.h for the EMAC_MACINVECTOR/MACEOIVECTOR decode.
+ */
+
+#define RM57_REQ_EMACMISC             76 /* EMAC C0_MISC_PULSE (stats/host/MDIO) */
+#define RM57_REQ_EMACTX               77 /* EMAC C0_TX_PULSE (Tx completion) */
+#define RM57_REQ_EMACTHRESH           78 /* EMAC C0_THRESH_PULSE (Rx flow threshold) */
+#define RM57_REQ_EMACRX               79 /* EMAC C0_RX_PULSE (Rx completion) */
 #define RM57_REQ_DCC1DONE            82 /* DCC1 done interrupt */
 #define RM57_REQ_DCC2DONE            83 /* DCC2 done interrupt */
 #define RM57_REQ_ETPWM1              90 /* ETPWM1 interrupt */

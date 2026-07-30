@@ -54,6 +54,16 @@ CHIP_CSRCS += rm57_dcan_sock.c
 endif
 endif
 
+ifeq ($(CONFIG_RM57_EMAC),y)
+CHIP_CSRCS += rm57_ethernet.c rm57_mdio.c
+endif
+
+ifeq ($(CONFIG_NET),y)
+ifneq ($(CONFIG_NETDEV_LATEINIT),y)
+CHIP_CSRCS += rm57_netinitialize.c
+endif
+endif
+
 # RM57 has no GIC - it uses the classic Hercules VIM interrupt controller
 
 CMN_CSRCS := $(filter-out arm_gicv2.c arm_gicv2_dump.c, $(CMN_CSRCS))

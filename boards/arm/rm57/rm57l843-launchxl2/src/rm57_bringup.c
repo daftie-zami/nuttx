@@ -52,5 +52,13 @@ int rm57_bringup(void)
     }
 #endif
 
+#if defined(CONFIG_RM57_EMAC) && defined(CONFIG_NETDEV_LATEINIT)
+  int eth_ret = rm57_eth_setup();
+  if (eth_ret < 0)
+    {
+      return eth_ret;
+    }
+#endif
+
   return OK;
 }

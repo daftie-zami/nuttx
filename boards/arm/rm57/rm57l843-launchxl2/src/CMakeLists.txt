@@ -32,4 +32,8 @@ if(CONFIG_RM57_DCAN)
   list(APPEND SRCS rm57_can.c)
 endif()
 
+if(CONFIG_RM57_EMAC AND CONFIG_NETDEV_LATEINIT)
+  list(APPEND SRCS rm57_ethernet.c)
+endif()
+
 target_sources(board PRIVATE ${SRCS})

@@ -85,6 +85,52 @@
 
 #define BOARD_RTICLK_FREQUENCY   75000000
 
+#ifdef CONFIG_RM57_EMAC
+
+/* EMAC internal logic clock (VCLKA4_DIVR_EMAC, SPNS215 Section 6.6.3):
+ * MII requires exactly 25 MHz, RMII requires exactly 50 MHz.
+ *
+ * MII: sourced from VCLK (75 MHz, see BOARD_VCLK_FREQUENCY above)
+ * divided by 3 via the VCLKA4R field - an exact match given this
+ * board's PLL parameters (HCLK=150MHz, VCLK=HCLK/2=75MHz,
+ * 75MHz/3=25MHz exactly).
+ *
+ * RMII: 75 MHz has no integer divisor that produces 50 MHz, so RMII
+ * cannot be sourced from VCLK.  SPNS215 Table 6-17 offers PLL2
+ * post_ODCLK/8 or post_ODCLK/16 as the only other source options for
+ * this clock domain.  This port does not independently verify PLL2's
+ * output frequency (the PLL2 register configuration in
+ * rm57_clockconfig.c's rm57_setup_pll() is transcribed from HALCoGen
+ * and has not been cross-checked bit-for-bit against SYS2_PLLCTL3's
+ * documented field layout), so the values below are a starting point
+ * only.  Before relying on CONFIG_RM57_EMAC_RMII on real hardware,
+ * measure VCLKA4_DIVR_EMAC on the ECLK1 test pin via the system
+ * module's CLKTEST register (SEL_ECP_PIN = 0b10111, "EMAC Clock
+ * Output") and correct BOARD_VCLKA4_SRC/BOARD_VCLKA4_DIV below if the
+ * measured frequency is not exactly 50 MHz.
+ */
+
+#  ifdef CONFIG_RM57_EMAC_RMII
+#    define BOARD_VCLKA4_SRC        0xf  /* PLL2 post_ODCLK/16 (UNVERIFIED) */
+#    define BOARD_VCLKA4_DIV        0    /* VCLKA4R divide-by-1 (UNVERIFIED) */
+#    define BOARD_VCLKA4_FREQUENCY  50000000
+#  else
+#    define BOARD_VCLKA4_SRC        0x8  /* VCLK */
+#    define BOARD_VCLKA4_DIV        2    /* VCLKA4R divide-by-3: 75MHz/3=25MHz */
+#    define BOARD_VCLKA4_FREQUENCY  25000000
+#  endif
+
+/* EMAC MDIO module clock source (VCLK3, SPNU562A Section 31.2.1): a
+ * moderate peripheral bus rate the MDIO module's own CLKDIV field
+ * further divides down to the target MDIO clock (typically 1MHz, see
+ * CONFIG_RM57_EMAC_MDIO_FREQ).
+ */
+
+#  define BOARD_VCLK3_DIV           1    /* VCLK3R divide-by-2: HCLK/2=75MHz */
+#  define BOARD_VCLK3_FREQUENCY     75000000
+
+#endif /* CONFIG_RM57_EMAC */
+
 /* PIN Multiplexor Initializer **********************************************/
 
 /* Balls listed here are switched away from their reset function by
@@ -141,18 +187,95 @@
 #  define BOARD_PINMUX_DCAN4
 #endif
 
+/* EMAC/MDIO.  Every MII/RMII data and clock signal on RM57L843 (except
+ * MDIO_CLK, an unshared output) is available on two alternate balls; the
+ * function-select entry (PINMUX_<ball>_<signal>_PIN, applied to PINMMR0-
+ * 36) switches *that ball* to the signal, while a separate input-select
+ * entry (PINMUX_SIG_<signal>_<ball>_PIN, applied to PINMMR87-91) tells
+ * the peripheral which of its two possible balls to actually listen to
+ * for signals that are inputs to the MCU.  Both must be set together for
+ * every input signal used below.
+ *
+ * Ball choices here (the lower-numbered PINMMR21-36 bank option in each
+ * pair, e.g. K19 over T4 for RXCLK, D19 over U7 for TX_CLK, G3 over F4
+ * for MDIO) are a reasonable default grouping but are NOT independently
+ * confirmed against the LAUNCHXL2-RM57L schematic - verify against the
+ * board schematic/silkscreen before relying on this in new hardware
+ * bring-up (a wrong ball choice here reads as "no link" with no other
+ * symptom, since the MAC/PHY register-level configuration would still
+ * look correct).
+ */
+
+#ifdef CONFIG_RM57_EMAC
+#  define BOARD_PINMUX_EMAC_MDIO \
+  PINMUX_V5_MDCLK_PIN, \
+  PINMUX_G3_MDIO_PIN, \
+  PINMUX_SIG_MDIO_G3_PIN,
+
+#  ifdef CONFIG_RM57_EMAC_RMII
+#    define BOARD_PINMUX_EMAC \
+  BOARD_PINMUX_EMAC_MDIO \
+  PINMUX_K19_MII_RXCLK_PIN, /* RMII_50MHZ_CLK reference input */ \
+  PINMUX_SIG_MII_RXCLK_K19_PIN, \
+  PINMUX_J19_RMII_TXD_1_PIN, \
+  PINMUX_J18_RMII_TXD_0_PIN, \
+  PINMUX_H19_RMII_TXEN_PIN, \
+  PINMUX_B4_RMII_CRS_DV_PIN, \
+  PINMUX_SIG_MII_CRS_B4_PIN, \
+  PINMUX_A14_RMII_RXD_1_PIN, \
+  PINMUX_SIG_MII_RXD_1_A14_PIN, \
+  PINMUX_P1_RMII_RXD_0_PIN, \
+  PINMUX_SIG_MII_RXD_0_P1_PIN, \
+  PINMUX_N19_RMII_RX_ER_PIN, \
+  PINMUX_SIG_MII_RX_ER_N19_PIN, \
+  PINMUX_ETHERNET_RMII_PIN,
+#  else
+#    define BOARD_PINMUX_EMAC \
+  BOARD_PINMUX_EMAC_MDIO \
+  PINMUX_D19_MII_TX_CLK_PIN, \
+  PINMUX_SIG_MII_TX_CLK_D19_PIN, \
+  PINMUX_E18_MII_TXD_3_PIN, \
+  PINMUX_R2_MII_TXD_2_PIN, \
+  PINMUX_J19_MII_TXD_1_PIN, \
+  PINMUX_J18_MII_TXD_0_PIN, \
+  PINMUX_H19_MII_TXEN_PIN, \
+  PINMUX_F3_MII_COL_PIN, \
+  PINMUX_SIG_MII_COL_F3_PIN, \
+  PINMUX_B4_MII_CRS_PIN, \
+  PINMUX_SIG_MII_CRS_B4_PIN, \
+  PINMUX_K19_MII_RXCLK_PIN, \
+  PINMUX_SIG_MII_RXCLK_K19_PIN, \
+  PINMUX_H18_MII_RXD_3_PIN, \
+  PINMUX_SIG_MII_RXD_3_H18_PIN, \
+  PINMUX_G19_MII_RXD_2_PIN, \
+  PINMUX_SIG_MII_RXD_2_G19_PIN, \
+  PINMUX_A14_MII_RXD_1_PIN, \
+  PINMUX_SIG_MII_RXD_1_A14_PIN, \
+  PINMUX_P1_MII_RXD_0_PIN, \
+  PINMUX_SIG_MII_RXD_0_P1_PIN, \
+  PINMUX_B11_MII_RX_DV_PIN, \
+  PINMUX_SIG_MII_RX_DV_B11_PIN, \
+  PINMUX_N19_MII_RX_ER_PIN, \
+  PINMUX_SIG_MII_RX_ER_N19_PIN, \
+  PINMUX_ETHERNET_MII_PIN,
+#  endif
+#else
+#  define BOARD_PINMUX_EMAC
+#endif
+
 /* Left undefined when no multiplexed pin is in use, so that no pin-mux
  * table is generated at all.
  */
 
 #if defined(CONFIG_RM57_SCI2) || defined(CONFIG_RM57_LIN) || \
     defined(CONFIG_RM57_SCI3) || defined(CONFIG_RM57_SCI4) || \
-    defined(CONFIG_RM57_DCAN4)
+    defined(CONFIG_RM57_DCAN4) || defined(CONFIG_RM57_EMAC)
 #  define BOARD_PINMUX_INITIALIZER \
   BOARD_PINMUX_LIN2 \
   BOARD_PINMUX_SCI3 \
   BOARD_PINMUX_SCI4 \
-  BOARD_PINMUX_DCAN4
+  BOARD_PINMUX_DCAN4 \
+  BOARD_PINMUX_EMAC
 #endif
 
 /* LED definitions **********************************************************/
