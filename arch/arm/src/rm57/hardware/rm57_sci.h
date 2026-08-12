@@ -98,17 +98,21 @@
 /* Byte lane of the 8-bit RX/TX data within the 32-bit RD/TD registers, as
  * seen by the DMA controller when it performs an 8-bit access.
  *
- * The CPU runs little-endian, but the Hercules peripheral bus is BE-32:
- * a sub-word access to a 32-bit peripheral register selects the byte lane
- * as (3 - (addr & 3)).  This was confirmed on RM57L843 hardware, where
- * 32-bit debug-port accesses to peripheral registers are byte-swapped
- * (the reason OpenOCD needs "ti_be_32_quirks 1" for this device).  The
- * RD/TD data byte (bits 7:0) is therefore at the register's +3 address
- * for an 8-bit DMA access, matching TI's HALCoGen examples.
+ * The RD/TD data byte lives in bits 7:0 of the 32-bit register. This
+ * image runs LE32 (no CONFIG_ENDIAN_BIG, no boot-time endian switch in
+ * rm57_boot.c), and the same LE32 mode applies to every bus master,
+ * including the DMA controller, so the data byte for an 8-bit DMA access
+ * is at the register's +0 address.
+ *
+ * Do NOT use OpenOCD's "ti_be_32_quirks 1" setting as evidence for a +3
+ * byte-lane offset here: that quirk is specific to how the JTAG/DAP debug
+ * port presents byte lanes for sub-word memory accesses made *through the
+ * debugger*, and says nothing about how the CPU/DMA controller address
+ * bytes during normal program execution.
  */
 
-#define RM57_SCI_RD_DMA_OFFSET       (RM57_SCI_RD_OFFSET + 3)
-#define RM57_SCI_TD_DMA_OFFSET       (RM57_SCI_TD_OFFSET + 3)
+#define RM57_SCI_RD_DMA_OFFSET       (RM57_SCI_RD_OFFSET + 0)
+#define RM57_SCI_TD_DMA_OFFSET       (RM57_SCI_TD_OFFSET + 0)
 
 /* Register Bit-Field Definitions *******************************************/
 
