@@ -47,6 +47,7 @@
 #include "arm_internal.h"
 #include "hardware/rm57l843_memorymap.h"
 #include "hardware/rm57_vim.h"
+#include "rm57_gio.h"
 #include "rm57_irq.h"
 
 /****************************************************************************
@@ -113,6 +114,12 @@ void up_irqinitialize(void)
   putreg32(0xffffffff, RM57_VIM_REQMASKCLR1);
   putreg32(0xffffffff, RM57_VIM_REQMASKCLR2);
   putreg32(0xffffffff, RM57_VIM_REQMASKCLR3);
+
+  /* Initialize the second level of interrupt decoding for GIO pins.  This
+   * is a no-op unless CONFIG_RM57_GIO_IRQ is set.
+   */
+
+  rm57_gioirq_initialize();
 
 #ifndef CONFIG_SUPPRESS_INTERRUPTS
   /* And finally, enable interrupts globally */
