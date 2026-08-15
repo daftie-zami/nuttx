@@ -312,4 +312,17 @@
 #define LED_PANIC           3 /* The system has crashed */
 #undef  LED_IDLE              /* MCU is in sleep mode: Not used */
 
+/* Button definitions ********************************************************/
+
+/* Button index values for use with board_buttons() */
+
+#define BOARD_BUTTON_B4       0
+#define BOARD_BUTTON_B5       1
+#define BOARD_NUM_BUTTONS     2
+
+/* Button bits for use with board_buttons() */
+
+#define BOARD_BUTTON_B4_BIT   (1 << BOARD_BUTTON_B4)
+#define BOARD_BUTTON_B5_BIT   (1 << BOARD_BUTTON_B5)
+
 #endif /* __BOARDS_ARM_RM57_RM57L843_LAUNCHXL2_INCLUDE_BOARD_H */
