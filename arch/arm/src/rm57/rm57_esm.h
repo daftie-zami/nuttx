@@ -45,4 +45,20 @@
 
 void rm57_esm_initialize(void);
 
+/****************************************************************************
+ * Name: rm57_esm_interrupt
+ *
+ * Description:
+ *   Handle the ESM high-level interrupt (VIM channel 0, hard-wired to FIQ):
+ *   report every pending channel and clear it so that the FIQ deasserts.
+ *
+ *   Attached from up_irqinitialize().  Group2 errors are nonmaskable, so
+ *   without this a latched one holds FIQ asserted forever.
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_ARMV7R_DECODEFIQ
+int rm57_esm_interrupt(int irq, void *context, void *arg);
+#endif
+
 #endif /* __ARCH_ARM_SRC_RM57_RM57_ESM_H */

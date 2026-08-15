@@ -25,8 +25,11 @@
  * split (RM57's VIM has 4 groups of 32 channels plus on-chip ECC
  * registers, not present on TMS570LS04x).
  *
- * ESM (Error Signaling Module) interrupt attach/enable is deferred along
- * with the rest of ESM support.
+ * The ESM (Error Signaling Module) high-level interrupt arrives on channel
+ * 0, which the VIM hard-wires to FIQ (FIRQPR bits 0/1 ignore writes), so it
+ * is attached below only when CONFIG_ARMV7R_DECODEFIQ provides a real FIQ
+ * vector body.  Without that, arm_vectorfiq is a bare "subs pc, lr, #4" and
+ * a latched nonmaskable group2 error would livelock the CPU.
  */
 
 /****************************************************************************
@@ -47,6 +50,7 @@
 #include "arm_internal.h"
 #include "hardware/rm57l843_memorymap.h"
 #include "hardware/rm57_vim.h"
+#include "rm57_esm.h"
 #include "rm57_gio.h"
 #include "rm57_irq.h"
 
@@ -120,6 +124,16 @@ void up_irqinitialize(void)
    */
 
   rm57_gioirq_initialize();
+
+#ifdef CONFIG_ARMV7R_DECODEFIQ
+  /* Attach the ESM high-level interrupt.  Channel 0 is already unmasked
+   * above; up_enable_fiq() additionally asserts its FIRQPR bit so the
+   * routing is explicit rather than relying on the hard-wired default.
+   */
+
+  DEBUGVERIFY(irq_attach(RM57_REQ_ESMHIGH, rm57_esm_interrupt, NULL));
+  up_enable_fiq(RM57_REQ_ESMHIGH);
+#endif
 
 #ifndef CONFIG_SUPPRESS_INTERRUPTS
   /* And finally, enable interrupts globally */

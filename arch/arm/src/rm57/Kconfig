@@ -124,6 +124,16 @@ config RM57_GIO_IRQ
 		Build in support for a second level of interrupt decoding for
 		GIO pins. Required for CONFIG_ARCH_IRQBUTTONS on this chip.
 
+config RM57_ESM_PANIC
+	bool "Panic on ESM error"
+	default n
+	depends on ARMV7R_DECODEFIQ
+	---help---
+		Call PANIC() after reporting a latched ESM error instead of
+		clearing it and continuing.  Leave this off while debugging so
+		that the channel report reaches the console and the system keeps
+		running.
+
 config RM57_SERIAL_RXDMA_BUFFER_SIZE
 	int "RX DMA buffer size"
 	default 64
