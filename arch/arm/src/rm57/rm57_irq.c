@@ -195,8 +195,6 @@ uint32_t *arm_decodefiq(uint32_t *regs)
 
 void up_disable_irq(int channel)
 {
-  uintptr_t regaddr;
-  uint32_t regval;
   uint32_t bitmask;
   unsigned int regndx;
 
@@ -206,12 +204,18 @@ void up_disable_irq(int channel)
   channel = VIM_REGBIT(channel);
   bitmask = (1 << channel);
 
-  /* Disable the IRQ/FIQ by setting the corresponding REQMASKCLR bit. */
+  /* Disable the IRQ/FIQ by writing the single corresponding REQMASKCLR bit.
+   *
+   * This must NOT be a read-modify-write.  Per SPNU562A Table 19-17 a
+   * REQENACLR bit reads back as 1 while its channel is *enabled*, and
+   * writing a 1 disables that channel (writing 0 has no effect).  Or-ing the
+   * new bit into the register's current value therefore writes a 1 for every
+   * channel that is currently enabled and disables all of them - so a single
+   * up_disable_irq() call used to silently take down every other interrupt
+   * in the group.
+   */
 
-  regaddr = RM57_VIM_REQMASKCLR(regndx);
-  regval  = getreg32(regaddr);
-  regval |= bitmask;
-  putreg32(regval, regaddr);
+  putreg32(bitmask, RM57_VIM_REQMASKCLR(regndx));
 }
 
 /****************************************************************************
@@ -244,12 +248,12 @@ void up_enable_irq(int channel)
   putreg32(regval, regaddr);
 #endif
 
-  /* Enable the IRQ by setting the corresponding REQMASKSET bit. */
+  /* Enable the IRQ by writing the single corresponding REQMASKSET bit.
+   * REQENASET mirrors REQENACLR: a 1 enables, a 0 has no effect, so only the
+   * one bit may be written here (see up_disable_irq()).
+   */
 
-  regaddr = RM57_VIM_REQMASKSET(regndx);
-  regval  = getreg32(regaddr);
-  regval |= bitmask;
-  putreg32(regval, regaddr);
+  putreg32(bitmask, RM57_VIM_REQMASKSET(regndx));
 }
 
 /****************************************************************************
