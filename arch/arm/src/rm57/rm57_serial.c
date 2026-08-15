@@ -304,6 +304,7 @@ struct up_dev_s
 #ifdef SERIAL_HAVE_TXDMA
   const unsigned int txdma_req;  /* DMA request line, or RM57_DMA_NOREQ */
   DMA_HANDLE txdma;               /* Currently-open transmit DMA channel */
+  bool txdmabusy;                 /* A transmit block is still in flight */
 #endif
 
 #ifdef SERIAL_HAVE_RXDMA
@@ -586,6 +587,9 @@ static struct up_dev_s g_sci2priv =
     .parity       = 0,
     .bits         = 8,
     .stopbits2    = CONFIG_SCI2_2STOP,
+#ifdef CONFIG_RM57_SCI2_LOOPBACK
+    .loopback     = true,
+#endif
   },
   .irq            = RM57_REQ_LIN2HIGH,
 #ifdef SERIAL_HAVE_TXDMA
@@ -642,6 +646,9 @@ static struct up_dev_s g_sci3priv =
     .parity       = 0,
     .bits         = 8,
     .stopbits2    = CONFIG_SCI3_2STOP,
+#ifdef CONFIG_RM57_SCI3_LOOPBACK
+    .loopback     = true,
+#endif
   },
   .irq            = RM57_REQ_SCI3HIGH,
 #ifdef SERIAL_HAVE_TXDMA
@@ -698,6 +705,9 @@ static struct up_dev_s g_sci4priv =
     .parity       = 0,
     .bits         = 8,
     .stopbits2    = CONFIG_SCI4_2STOP,
+#ifdef CONFIG_RM57_SCI4_LOOPBACK
+    .loopback     = true,
+#endif
   },
   .irq            = RM57_REQ_SCI4HIGH,
 #ifdef SERIAL_HAVE_TXDMA
@@ -1220,7 +1230,19 @@ static int up_dma_nextrx(struct up_dev_s *priv)
 {
   size_t dmaresidual = rm57_dmaresidual(priv->rxdma);
 
-  return (RXDMA_BUFFER_SIZE - (int)dmaresidual) % RXDMA_BUFFER_SIZE;
+  /* The residual can never exceed the size of the ring the channel was
+   * programmed with.  Clamp it rather than let an out-of-range reading turn
+   * into a negative index: C's % keeps the sign of the dividend, so a
+   * residual of RXDMA_BUFFER_SIZE + 1 would silently yield -1 here, which
+   * up_dma_rxavailable() would then read as "bytes are waiting" forever.
+   */
+
+  if (dmaresidual > RXDMA_BUFFER_SIZE)
+    {
+      dmaresidual = RXDMA_BUFFER_SIZE;
+    }
+
+  return (int)((RXDMA_BUFFER_SIZE - dmaresidual) % RXDMA_BUFFER_SIZE);
 }
 #endif
 
@@ -1255,7 +1277,8 @@ static int up_dma_setup(struct uart_dev_s *dev)
 #ifdef SERIAL_HAVE_TXDMA
   if (priv->txdma_req != RM57_DMA_NOREQ)
     {
-      priv->txdma = rm57_dmachannel(priv->txdma_req);
+      priv->txdma     = rm57_dmachannel(priv->txdma_req);
+      priv->txdmabusy = false;
     }
 #endif
 
@@ -1301,10 +1324,21 @@ static int up_dma_setup(struct uart_dev_s *dev)
        * at the half and full points in the FIFO so there is always half
        * a FIFO worth of time to claim bytes before they are
        * overwritten.
+       *
+       * SET RX INT must be set as well as SET RX DMA: per TRM 29.4.1 it
+       * is SET RX INT that arms the RXRDY event, while SET RX DMA only
+       * steers the resulting request to the DMA controller instead of the
+       * CPU.  With SET RX DMA set no CPU interrupt is generated (TRM
+       * 28.2.2.2: both DMA bits must be *cleared* to select interrupt
+       * functionality), so this does not disturb up_interrupt().
+       *
+       * The transmit side needs no equivalent because TXRDY is level-high
+       * whenever SCITD is empty, so arming SET TX DMA is enough to make
+       * the first request fire.
        */
 
       up_serialout(priv, RM57_SCI_SETINT_OFFSET,
-                   SCI_INT_RXDMA | SCI_INT_RXDMAALL);
+                   SCI_INT_RX | SCI_INT_RXDMA | SCI_INT_RXDMAALL);
 
       rm57_dmastart(priv->rxdma, up_dma_rxcallback, priv, true);
     }
@@ -1329,7 +1363,8 @@ static void up_dma_shutdown(struct uart_dev_s *dev)
   struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
 
   up_serialout(priv, RM57_SCI_CLEARINT_OFFSET,
-               SCI_INT_TXDMA | SCI_INT_RXDMA | SCI_INT_RXDMAALL);
+               SCI_INT_RX | SCI_INT_TXDMA | SCI_INT_RXDMA |
+               SCI_INT_RXDMAALL);
 
   up_shutdown(dev);
 
@@ -1338,7 +1373,8 @@ static void up_dma_shutdown(struct uart_dev_s *dev)
     {
       rm57_dmastop(priv->txdma);
       rm57_dmafree(priv->txdma);
-      priv->txdma = NULL;
+      priv->txdma     = NULL;
+      priv->txdmabusy = false;
     }
 #endif
 
@@ -1535,6 +1571,7 @@ static void up_dma_send(struct uart_dev_s *dev)
 
   up_serialout(priv, RM57_SCI_SETINT_OFFSET, SCI_INT_TXDMA);
 
+  priv->txdmabusy = true;
   rm57_dmastart(priv->txdma, up_dma_txcallback, priv, false);
 }
 #endif
@@ -1554,8 +1591,16 @@ static void up_dma_txavailable(struct uart_dev_s *dev)
   struct up_dev_s *priv = (struct up_dev_s *)dev->priv;
   irqstate_t flags = enter_critical_section();
 
-  if (dev->dmatx.length == 0 && dev->dmatx.nlength == 0 &&
-      rm57_dmaresidual(priv->txdma) == 0)
+  /* Whether a block is still going out is tracked here rather than asked
+   * of the DMA: CTCOUNT in the working control packet is only written back
+   * when the channel is arbitrated out of the priority queue (TRM Table
+   * 20-108), so a channel that is busy - or merely still resident in the
+   * queue - can report a stale count in either direction.  Deciding
+   * "transmitter idle" from it risks either dropping the next block or
+   * starting it on top of a live one.
+   */
+
+  if (!priv->txdmabusy && dev->dmatx.length == 0 && dev->dmatx.nlength == 0)
     {
       uart_xmitchars_dma(dev);
     }
@@ -1580,29 +1625,36 @@ static void up_dma_txcallback(DMA_HANDLE handle, uint8_t status, void *arg)
   struct up_dev_s *priv = (struct up_dev_s *)arg;
   struct uart_dev_s *dev = &priv->dev;
 
-  if ((status & RM57_DMA_STATUS_BTC) != 0)
+  /* Only a block transfer completion ends a transmit.  Anything else -
+   * a half-block notification in particular - must leave the SCI's TX DMA
+   * request armed, or the rest of the block never goes out.
+   */
+
+  if ((status & RM57_DMA_STATUS_BTC) == 0)
     {
-      dev->dmatx.nbytes += dev->dmatx.length;
-      if (dev->dmatx.nlength)
-        {
-          struct rm57_dmacfg_s txdmacfg;
+      return;
+    }
 
-          txdmacfg.saddr     = (uint32_t)dev->dmatx.nbuffer;
-          txdmacfg.daddr     = priv->scibase + RM57_SCI_TD_DMA_OFFSET;
-          txdmacfg.nframes   = dev->dmatx.nlength;
-          txdmacfg.nelems    = 1;
-          txdmacfg.chctrl    = DMA_CHCTRL_RES_8BIT | DMA_CHCTRL_WES_8BIT |
-                                DMA_CHCTRL_ADDMR_INCR |
-                                DMA_CHCTRL_ADDMW_CONST;
-          txdmacfg.parassign = DMA_PAR_AB_A_RD_B_WR;
-          rm57_dmasetup(priv->txdma, &txdmacfg);
+  dev->dmatx.nbytes += dev->dmatx.length;
+  if (dev->dmatx.nlength)
+    {
+      struct rm57_dmacfg_s txdmacfg;
 
-          dev->dmatx.length  = dev->dmatx.nlength;
-          dev->dmatx.nlength = 0;
+      txdmacfg.saddr     = (uint32_t)dev->dmatx.nbuffer;
+      txdmacfg.daddr     = priv->scibase + RM57_SCI_TD_DMA_OFFSET;
+      txdmacfg.nframes   = dev->dmatx.nlength;
+      txdmacfg.nelems    = 1;
+      txdmacfg.chctrl    = DMA_CHCTRL_RES_8BIT | DMA_CHCTRL_WES_8BIT |
+                            DMA_CHCTRL_ADDMR_INCR |
+                            DMA_CHCTRL_ADDMW_CONST;
+      txdmacfg.parassign = DMA_PAR_AB_A_RD_B_WR;
+      rm57_dmasetup(priv->txdma, &txdmacfg);
 
-          rm57_dmastart(priv->txdma, up_dma_txcallback, priv, false);
-          return;
-        }
+      dev->dmatx.length  = dev->dmatx.nlength;
+      dev->dmatx.nlength = 0;
+
+      rm57_dmastart(priv->txdma, up_dma_txcallback, priv, false);
+      return;
     }
 
   /* Transfer complete and no follow-on buffer: stop generating TX DMA
@@ -1610,6 +1662,8 @@ static void up_dma_txcallback(DMA_HANDLE handle, uint8_t status, void *arg)
    */
 
   up_serialout(priv, RM57_SCI_CLEARINT_OFFSET, SCI_INT_TXDMA);
+
+  priv->txdmabusy = false;
 
   uart_xmitchars_done(dev);
 

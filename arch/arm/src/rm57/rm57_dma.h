@@ -173,10 +173,18 @@ void rm57_dmastop(DMA_HANDLE handle);
  * Name: rm57_dmaresidual
  *
  * Description:
- *   Return the number of elements remaining to be transferred, computed
- *   from the channel's working control packet (current transfer count).
- *   For the byte-per-element transfers used by this port's serial DMA,
- *   this is the number of bytes remaining.
+ *   Return the number of elements remaining to be transferred.  For the
+ *   byte-per-element transfers used by this port's serial DMA, this is the
+ *   number of bytes remaining.
+ *
+ *   The count comes from the DMA's live FIFO state while the channel is
+ *   being processed and from its working control packet otherwise; the
+ *   latter is only refreshed when the channel is arbitrated out, so an
+ *   answer can trail the bytes already in memory by an element or two.  It
+ *   is therefore usable as a receive ring position, which only has to be
+ *   safe against running ahead of the data, but not as a "transfer
+ *   finished" test - a completed channel does not reliably reach zero.  A
+ *   channel that has been set up but never triggered reports zero.
  *
  ****************************************************************************/
 

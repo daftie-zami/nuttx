@@ -50,6 +50,9 @@ struct sci_config_s
   uint8_t  bits;                /* Number of bits (5-9) */
   bool     stopbits2;           /* true: Configure with 2 stop bits
                                   * instead of 1 */
+  bool     loopback;            /* true: Tie TX to RX inside the module
+                                  * (SCIGCR1.LOOPBACK, TRM 29.4 "self
+                                  * test")*/
 };
 
 /****************************************************************************

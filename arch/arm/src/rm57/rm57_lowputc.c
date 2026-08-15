@@ -289,6 +289,17 @@ int rm57_sci_configure(uint32_t base, const struct sci_config_s *config)
       gcr1 |= SCI_GCR1_STOP;
     }
 
+  /* Internal self test: connect the transmitter to the receiver inside the
+   * module so that a port can be exercised without any external wiring
+   * (TRM SPNU562A 29.4, "Set LOOP BACK bit in SCIGCR1 to 1 to connect the
+   * transmitter to the receiver internally").
+   */
+
+  if (config->loopback)
+    {
+      gcr1 |= SCI_GCR1_LOOPBACK;
+    }
+
   putreg32(gcr1, base + RM57_SCI_GCR1_OFFSET);
 
   /* Baud rate divisor. Only the integer P divisor is used (M=0), matching
