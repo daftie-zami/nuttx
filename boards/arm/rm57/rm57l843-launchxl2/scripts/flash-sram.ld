@@ -96,6 +96,34 @@ SECTIONS
         _edata = ABSOLUTE(.);
     } > sram AT > flash
 
+    /* Pad the flash image out to a 64KB boundary with real, programmed
+     * bytes, and mark the end for rm57_mpu_init().
+     *
+     * Blank flash has no valid ECC, and the Cortex-R5F raises a fatal bus
+     * error (ESM group2 channel 3, nonmaskable) on any access that touches
+     * it - including a D-cache line fill or a speculative fetch.  See
+     * SPNU562A section 7.4.1.  Without this pad the .data copy in
+     * arm_data_initialize() fills the 32-byte cache line straddling the end
+     * of the image and latches that error on every boot.
+     *
+     * 64KB matches the MPU sub-region granularity of the 512KB flash region
+     * programmed in rm57_mpuinit.c, so no blank flash is left inside the
+     * cacheable region.  If the image ever outgrows 512KB the MPU region
+     * doubles to 1MB and this ALIGN must become 0x20000 to match.
+     *
+     * FILL()+BYTE() rather than a bare ALIGN: an empty output section emits
+     * no bytes, and nothing downstream pads for us (OBJCOPYARGS is empty, so
+     * there is no --pad-to/--gap-fill).  The trailing BYTE forces the fill
+     * to be real section content.
+     */
+
+    .flashpad : {
+        FILL(0x00)
+        . = ALIGN(0x10000) - 1;
+        BYTE(0x00)
+        _eflash = ABSOLUTE(.);
+    } > flash
+
     .bss : {
         _sbss = ABSOLUTE(.);
         *(.bss .bss.*)

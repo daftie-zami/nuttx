@@ -26,8 +26,20 @@
 
 #include <nuttx/config.h>
 
+#include <stdint.h>
+
 #include "rm57_mpuinit.h"
 #include "mpu.h"
+
+/****************************************************************************
+ * Public Data
+ ****************************************************************************/
+
+/* End of the programmed flash image, padded up to a 64KB boundary by the
+ * .flashpad section in the board linker script.
+ */
+
+extern uint8_t _eflash[];
 
 /****************************************************************************
  * Public Functions
@@ -69,7 +81,21 @@ void rm57_mpu_init(void)
 
   rm57_mpu_reset();
 
-  rm57_flash_region(RM57_FLASH_BASE, RM57_PFLASH);
+  /* Fence off the whole flash first, then overlay just the programmed part
+   * as cacheable and executable.  Order matters: overlapping MPU regions
+   * resolve in favour of the highest-numbered region, and mpu_allocregion()
+   * hands out increasing region numbers, so the guard must be configured
+   * before the region that is meant to win.
+   *
+   * The programmed extent comes from _eflash rather than a constant so the
+   * two stay in step as the image grows.  mpu_modify_region() rounds the
+   * size up to a power of two and then trims it back with sub-regions, so a
+   * 0x60000 image yields a 512KB region with sub-regions 0-5 enabled: an
+   * exact 0x0-0x5ffff match, with no blank flash left inside it.
+   */
+
+  rm57_flash_guard_region(RM57_FLASH_BASE, RM57_PFLASH);
+  rm57_flash_region(RM57_FLASH_BASE, (uintptr_t)_eflash - RM57_FLASH_BASE);
   rm57_sram_region(RM57_RAM_BASE, RM57_SRAM);
   rm57_periph_region(RM57_PERIPH_START_ADDR, RM57_PERIPH_SIZE);
 
