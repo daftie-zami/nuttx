@@ -39,7 +39,7 @@
  * Pre-processor Definitions
  ****************************************************************************/
 
-#define RM57_NUM_OF_MPU_REGION    (3)
+#define RM57_NUM_OF_MPU_REGION    (4)
 
 /* Peripheral register region: covers the 0xf0000000-0xffffffff span,
  * which contains all peripheral bases used by this port (GIO, SCI, VIM,
@@ -49,6 +49,25 @@
 
 #define RM57_PERIPH_START_ADDR    (0xf0000000)
 #define RM57_PERIPH_SIZE          (0x10000000ul)
+
+/* UNPROGRAMMED FLASH GUARD REGION
+ *   Not cacheable, not bufferable, shareable (device memory), execute
+ *   never.
+ *
+ *   Blank flash carries no valid ECC, and per SPNU562A section 7.4.1 the
+ *   Cortex-R5F "may generate speculative fetches to any location within the
+ *   Flash memory space"; such a fetch to a location with invalid ECC does
+ *   not abort but latches ESM group2 channel 3, which is nonmaskable and
+ *   drives nERROR low.  Device memory is never speculatively accessed and
+ *   XN blocks instruction fetch, so covering the whole flash with this and
+ *   then overlaying the programmed part with rm57_flash_region() keeps the
+ *   CPU out of the blank area entirely.
+ */
+
+#define rm57_flash_guard_region(base, size) \
+  mpu_configure_region(base, size, MPU_RACR_S    | \
+                                   MPU_RACR_AP_RWRW | \
+                                   MPU_RACR_XN)
 
 /* FLASH REGION
  *   Cacheable, bufferable, executable
