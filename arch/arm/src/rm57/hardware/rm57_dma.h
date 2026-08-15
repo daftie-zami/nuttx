@@ -236,10 +236,17 @@
  *
  * Primary control packet for channel n is at RM57_DMARAM_BASE + n*0x20;
  * the read-only working control packet for channel n is at
- * RM57_DMARAM_BASE + 0x800 + n*0x20 (TRM Figure 20-5, sections 20.3.2.*).
+ * RM57_DMARAM_BASE + 0x800 + n*0x10 (TRM Figure 20-5, sections 20.3.2.*).
+ *
+ * Note the two strides differ: a primary packet is eight words wide
+ * (ISADDR/IDADDR/ITCOUNT/reserved/CHCTRL/EIOFF/FIOFF/reserved) while a
+ * working packet is only four (CSADDR/CDADDR/CTCOUNT/reserved).  Using the
+ * primary stride for both put every working packet except channel 0's at
+ * the wrong address, so rm57_dmaresidual() always read back zero.
  */
 
-#define RM57_DMA_CHANNEL_STRIDE       0x0020
+#define RM57_DMA_PCP_STRIDE           0x0020
+#define RM57_DMA_WCP_STRIDE           0x0010
 #define RM57_DMA_WORKING_CP_OFFSET    0x0800
 
 #define RM57_DMA_PCP_ISADDR_OFFSET    0x00 /* Initial Source Address */

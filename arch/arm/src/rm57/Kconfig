@@ -101,6 +101,32 @@ config RM57_SCI4_TXDMA
 	depends on RM57_SCI4 && RM57_DMA
 	select SERIAL_TXDMA
 
+config RM57_SCI2_LOOPBACK
+	bool "SCI2/LIN2 internal loopback (self test)"
+	default n
+	depends on RM57_SCI2 && !SCI2_SERIAL_CONSOLE
+	---help---
+		Set SCIGCR1.LOOPBACK so the transmitter is tied to the receiver
+		inside the module (TRM 29.4 "self test").  Anything written to
+		the port comes straight back on its own receiver and the RX/TX
+		balls are ignored, which exercises the full TX and RX paths -
+		DMA included - without any external wiring or knowledge of the
+		board's header pinout.  For bring-up and testing only.
+
+config RM57_SCI3_LOOPBACK
+	bool "SCI3 internal loopback (self test)"
+	default n
+	depends on RM57_SCI3 && !SCI3_SERIAL_CONSOLE
+	---help---
+		See RM57_SCI2_LOOPBACK.
+
+config RM57_SCI4_LOOPBACK
+	bool "SCI4 internal loopback (self test)"
+	default n
+	depends on RM57_SCI4 && !SCI4_SERIAL_CONSOLE
+	---help---
+		See RM57_SCI2_LOOPBACK.
+
 config RM57_LIN
 	bool "LIN 2.x driver scaffold (LIN1/LIN2 modules)"
 	default n

@@ -91,13 +91,102 @@ static bool g_dma_initialized;
 
 static inline uintptr_t rm57_dma_pcp_base(uint8_t chan)
 {
-  return RM57_DMARAM_BASE + (uintptr_t)chan * RM57_DMA_CHANNEL_STRIDE;
+  return RM57_DMARAM_BASE + (uintptr_t)chan * RM57_DMA_PCP_STRIDE;
 }
 
 static inline uintptr_t rm57_dma_wcp_base(uint8_t chan)
 {
   return RM57_DMARAM_BASE + RM57_DMA_WORKING_CP_OFFSET +
-         (uintptr_t)chan * RM57_DMA_CHANNEL_STRIDE;
+         (uintptr_t)chan * RM57_DMA_WCP_STRIDE;
+}
+
+/****************************************************************************
+ * Name: rm57_dma_ctcount
+ *
+ * Description:
+ *   Return a channel's current transfer count, preferring the live value
+ *   over the copy held in the working control packet.
+ *
+ *   The working control packet is only refreshed when the channel is
+ *   arbitrated out of the priority queue (TRM Table 20-108), so between
+ *   writebacks it reads several elements behind what the channel has
+ *   really transferred - measured on RM57L843 as two elements behind for a
+ *   byte-at-a-time SCI receive, which is enough to strand the last byte of
+ *   every received burst in the ring buffer.
+ *
+ *   In fact the packet may never be written back at all: a channel that is
+ *   simply left armed - an SCI receive ring, for one - can sit there having
+ *   taken dozens of bytes with its shadow still all zeroes.  Measured on a
+ *   DMA console: 57 bytes received, CTCOUNT 0x00000000.  So the shadow on
+ *   its own cannot drive a receive ring.
+ *
+ *   The FIFO A/B active channel registers carry the live count instead.
+ *   FIFOASTAT/FIFOBSTAT names the channel each FIFO is processing right now
+ *   (TRM 20.3.1.86/87), and a FIFO that is processing nothing keeps
+ *   describing whichever channel last ran there - still useful, since a
+ *   mostly idle port is rarely "currently processing" when the poll asks.
+ *   Such a leftover is claimed by matching its retained source address.
+ *
+ *   The catch is that with several ports on DMA a channel bounces between
+ *   the two FIFOs, so both can hold a matching snapshot and one of them is
+ *   the older.  Taking the first match found reports a position that has
+ *   moved *backwards*, and a ring-buffer reader takes that for a nearly
+ *   full buffer of data it has already consumed - on the console it came
+ *   out as whole runs of replayed characters.  Every candidate is therefore
+ *   weighed and the furthest along wins; a smaller count is further along,
+ *   since CFTCOUNT sits in the high bits of the register.
+ *
+ ****************************************************************************/
+
+static uint32_t rm57_dma_ctcount(struct rm57_dmach_s *priv)
+{
+  uint32_t chbit  = (uint32_t)1 << priv->chan;
+  uint32_t isaddr = getreg32(rm57_dma_pcp_base(priv->chan) +
+                             RM57_DMA_PCP_ISADDR_OFFSET);
+  uint32_t best   = 0;
+  int i;
+
+  for (i = 0; i < 2; i++)
+    {
+      uint32_t statoff  = i == 0 ? RM57_DMA_FIFOASTATREG_OFFSET :
+                                   RM57_DMA_FIFOBSTATREG_OFFSET;
+      uint32_t saddroff = i == 0 ? RM57_DMA_FAACSADDR_OFFSET :
+                                   RM57_DMA_FBACSADDR_OFFSET;
+      uint32_t tcoff    = i == 0 ? RM57_DMA_FAACTC_OFFSET :
+                                   RM57_DMA_FBACTC_OFFSET;
+      uint32_t stat     = getreg32(RM57_DMA_BASE + statoff);
+      uint32_t tc;
+
+      /* Processing this channel right now: live and authoritative. */
+
+      if ((stat & chbit) != 0)
+        {
+          return getreg32(RM57_DMA_BASE + tcoff);
+        }
+
+      if (stat != 0 || getreg32(RM57_DMA_BASE + saddroff) != isaddr)
+        {
+          continue;
+        }
+
+      tc = getreg32(RM57_DMA_BASE + tcoff);
+      if (tc != 0 && (best == 0 || tc < best))
+        {
+          best = tc;
+        }
+    }
+
+  /* A zero count means "nothing recorded here yet" rather than "finished",
+   * for the shadow and for a FIFO that has not run this channel.
+   */
+
+  if (best == 0)
+    {
+      best = getreg32(rm57_dma_wcp_base(priv->chan) +
+                      RM57_DMA_WCP_CTCOUNT_OFFSET);
+    }
+
+  return best;
 }
 
 /****************************************************************************
@@ -106,11 +195,12 @@ static inline uintptr_t rm57_dma_wcp_base(uint8_t chan)
  * Description:
  *   Common HBCA/BTCA interrupt bottom half: read-and-clear the pending
  *   channel bits from the given flag register, then invoke the callback
- *   for each in-use channel found pending.
+ *   for each in-use channel that asked for this interrupt.
  *
  ****************************************************************************/
 
-static void rm57_dma_dispatch(uint32_t flagoffset, uint8_t status)
+static void rm57_dma_dispatch(uint32_t flagoffset, uint32_t enaoffset,
+                              uint8_t status)
 {
   uint32_t pending;
   uint32_t bit;
@@ -129,6 +219,19 @@ static void rm57_dma_dispatch(uint32_t flagoffset, uint8_t status)
    */
 
   putreg32(pending, RM57_DMA_BASE + flagoffset);
+
+  /* The hardware raises a channel's flag whenever that channel reaches the
+   * half-block or block boundary, whether or not the channel enabled the
+   * matching interrupt - xxINTENAS only gates who gets to raise the ARM
+   * interrupt, not who sets the flag.  Dispatching on the raw flags
+   * therefore delivered an HBC callback to channels that had only asked
+   * for BTC: a serial TX channel would get a "transfer done" callback at
+   * its halfway point, shut the SCI's TX DMA request off there and stall
+   * the second half of every transfer.  Only call back the channels that
+   * actually subscribed to this interrupt.
+   */
+
+  pending &= getreg32(RM57_DMA_BASE + enaoffset);
 
   while (pending != 0)
     {
@@ -150,13 +253,15 @@ static void rm57_dma_dispatch(uint32_t flagoffset, uint8_t status)
 
 static int rm57_dma_hbca_interrupt(int irq, void *context, void *arg)
 {
-  rm57_dma_dispatch(RM57_DMA_HBCFLAG_OFFSET, RM57_DMA_STATUS_HBC);
+  rm57_dma_dispatch(RM57_DMA_HBCFLAG_OFFSET, RM57_DMA_HBCINTENAS_OFFSET,
+                    RM57_DMA_STATUS_HBC);
   return OK;
 }
 
 static int rm57_dma_btca_interrupt(int irq, void *context, void *arg)
 {
-  rm57_dma_dispatch(RM57_DMA_BTCFLAG_OFFSET, RM57_DMA_STATUS_BTC);
+  rm57_dma_dispatch(RM57_DMA_BTCFLAG_OFFSET, RM57_DMA_BTCINTENAS_OFFSET,
+                    RM57_DMA_STATUS_BTC);
   return OK;
 }
 
@@ -401,18 +506,29 @@ void rm57_dmastop(DMA_HANDLE handle)
 size_t rm57_dmaresidual(DMA_HANDLE handle)
 {
   struct rm57_dmach_s *priv = (struct rm57_dmach_s *)handle;
-  uintptr_t wcp;
   uint32_t ctcount;
   uint32_t cftcount;
   uint32_t cetcount;
 
   DEBUGASSERT(priv != NULL && priv->inuse);
 
-  wcp = rm57_dma_wcp_base(priv->chan);
-  ctcount = getreg32(wcp + RM57_DMA_WCP_CTCOUNT_OFFSET);
+  ctcount = rm57_dma_ctcount(priv);
 
   cftcount = (ctcount & DMA_TCOUNT_FTCOUNT_MASK) >> DMA_TCOUNT_FTCOUNT_SHIFT;
   cetcount = (ctcount & DMA_TCOUNT_ETCOUNT_MASK) >> DMA_TCOUNT_ETCOUNT_SHIFT;
 
-  return (size_t)cftcount * priv->nelems + cetcount;
+  /* CFTCOUNT counts the frames still to be transferred *including* the one
+   * in progress, and CETCOUNT counts the elements still to go within that
+   * in-progress frame - so the in-progress frame must be counted once, not
+   * twice.  Counting it twice made an idle channel (CFTCOUNT = FTCOUNT,
+   * CETCOUNT = ETCOUNT) report one element more than it had ever been
+   * programmed to transfer.
+   */
+
+  if (cftcount == 0)
+    {
+      return (size_t)cetcount;
+    }
+
+  return (size_t)(cftcount - 1) * priv->nelems + cetcount;
 }
