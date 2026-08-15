@@ -1054,6 +1054,8 @@ config ARCH_BOARD_RM57L843_LAUNCHXL2
 	bool "TI Hercules RM57L LaunchXL2"
 	depends on ARCH_CHIP_RM57L843
 	select ARCH_HAVE_LEDS
+	select ARCH_HAVE_BUTTONS
+	select ARCH_HAVE_IRQBUTTONS
 	---help---
 		TI Hercules RM57L LaunchPad Development Kit (LAUNCHXL2-RM57L)
 		featuring the Hercules RM57L843 chip.
