@@ -137,4 +137,37 @@
 #define RM57_ESM_ILCR7            (RM57_ESM_BASE + RM57_ESM_ILCR7_OFFSET)
 #define RM57_ESM_SR7(n)           (RM57_ESM_BASE + RM57_ESM_SR7_OFFSET(n))
 
+/* Register Bit-Field Definitions *******************************************/
+
+/* Interrupt Offset High/Low Registers (IOFFHR/IOFFLR)
+ *
+ * The offset registers report the highest-priority pending channel on the
+ * high-level (FIQ) and low-level (IRQ) lines respectively.  Zero means no
+ * interrupt is pending; otherwise the value encodes both the error group
+ * and the channel within it, in the banded layout below (SPNU562A
+ * Table 16-13).  Group2 outranks group1, and within a group channel 0 has
+ * the highest priority.
+ *
+ * Reading an offset register clears the corresponding flag in ESMSR2 only.
+ * Group1 flags survive the read and must be cleared by writing a 1 to the
+ * matching bit of SR1/SR4/SR7, or the source keeps re-asserting.
+ */
+
+#define ESM_IOFF_MASK             (0xff)  /* Bits 0-7: channel/group code */
+#define ESM_IOFF_NONE             (0x00)  /* No interrupt pending */
+
+#define ESM_IOFF_GRP1_LO_FIRST    (0x01)  /* 0x01-0x20: group1, ch 0-31 */
+#define ESM_IOFF_GRP1_LO_LAST     (0x20)
+#define ESM_IOFF_GRP2_FIRST       (0x21)  /* 0x21-0x40: group2, ch 0-31 */
+#define ESM_IOFF_GRP2_LAST        (0x40)
+#define ESM_IOFF_GRP1_MID_FIRST   (0x41)  /* 0x41-0x60: group1, ch 32-63 */
+#define ESM_IOFF_GRP1_MID_LAST    (0x60)
+#define ESM_IOFF_GRP1_HI_FIRST    (0x81)  /* 0x81-0xa0: group1, ch 64-95 */
+#define ESM_IOFF_GRP1_HI_LAST     (0xa0)
+
+/* Channels per status register, and the total the offset encoding spans */
+
+#define ESM_CHANS_PER_REG         (32)
+#define ESM_NCHANNELS             (128)
+
 #endif /* __ARCH_ARM_SRC_RM57_HARDWARE_RM57_ESM_H */
