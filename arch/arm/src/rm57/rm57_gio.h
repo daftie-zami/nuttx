@@ -161,6 +161,21 @@ static inline int rm57_gio_pinmask(gio_pinset_t cfgset)
 int rm57_gio_initialize(void);
 
 /****************************************************************************
+ * Name: rm57_gioirq_initialize
+ *
+ * Description:
+ *   Initialize logic to support a second level of interrupt decoding for
+ *   GIO pins.
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_RM57_GIO_IRQ
+void rm57_gioirq_initialize(void);
+#else
+#  define rm57_gioirq_initialize()
+#endif
+
+/****************************************************************************
  * Name: rm57_configgio
  *
  * Description:
@@ -189,6 +204,48 @@ void rm57_giowrite(gio_pinset_t pinset, bool value);
  ****************************************************************************/
 
 bool rm57_gioread(gio_pinset_t pinset);
+
+/****************************************************************************
+ * Name: rm57_gioirq
+ *
+ * Description:
+ *   Configure an interrupt for the specified GIO pin.
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_RM57_GIO_IRQ
+void rm57_gioirq(gio_pinset_t pinset);
+#else
+#  define rm57_gioirq(pinset)
+#endif
+
+/****************************************************************************
+ * Name: rm57_gioirqenable
+ *
+ * Description:
+ *   Enable the interrupt for specified GIO IRQ
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_RM57_GIO_IRQ
+void rm57_gioirqenable(int irq);
+#else
+#  define rm57_gioirqenable(irq)
+#endif
+
+/****************************************************************************
+ * Name: rm57_gioirqdisable
+ *
+ * Description:
+ *   Disable the interrupt for specified GIO IRQ
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_RM57_GIO_IRQ
+void rm57_gioirqdisable(int irq);
+#else
+#  define rm57_gioirqdisable(irq)
+#endif
 
 #undef EXTERN
 #if defined(__cplusplus)

@@ -57,7 +57,10 @@ int rm57_gio_initialize(void)
 
   putreg32(GIO_GCR0_RESET, RM57_GIO_GCR0);
 
-  /* Disable all pin interrupts. Make sure they are all level 0. */
+  /* Disable all pin interrupts and put every pin back on level B (low
+   * level), the reset default.  rm57_gioirq() promotes a pin to level A
+   * when an interrupt is configured for it.
+   */
 
   putreg32(0xffffffff, RM57_GIO_ENACLR);
   putreg32(0xffffffff, RM57_GIO_LVLCLR);
@@ -91,7 +94,13 @@ int rm57_configgio(gio_pinset_t cfgset)
   regval &= ~pinmask;
   putreg32(regval, base + RM57_GIO_DIR_OFFSET);
 
-  /* Disable interrupts on the pin. Make sure this is a level 0 pin. */
+  /* Disable interrupts on the pin and return it to level B (low level).
+   *
+   * NOTE: this demotion means rm57_gioirq() must always be called *after*
+   * rm57_configgio() for a given pin.  Reconfiguring a pin that already has
+   * an interrupt armed drops it back to the unhandled level B request line
+   * and its interrupt stops being delivered.
+   */
 
   putreg32(GIO_ENACLR_PORT_PIN(port, pin), RM57_GIO_ENACLR);
   putreg32(GIO_LVLCLR_PORT_PIN(port, pin), RM57_GIO_LVLCLR);
@@ -106,7 +115,7 @@ int rm57_configgio(gio_pinset_t cfgset)
           /* Disable pull functionality */
 
           regval  = getreg32(base + RM57_GIO_PULDIS_OFFSET);
-          regval &= ~pinmask;
+          regval |= pinmask;
           putreg32(regval, base + RM57_GIO_PULDIS_OFFSET);
         }
         break;
@@ -122,7 +131,7 @@ int rm57_configgio(gio_pinset_t cfgset)
           /* Enable pull functionality */
 
           regval  = getreg32(base + RM57_GIO_PULDIS_OFFSET);
-          regval |= pinmask;
+          regval &= ~pinmask;
           putreg32(regval, base + RM57_GIO_PULDIS_OFFSET);
         }
         break;
@@ -132,13 +141,13 @@ int rm57_configgio(gio_pinset_t cfgset)
           /* Select pull-down */
 
           regval  = getreg32(base + RM57_GIO_PSL_OFFSET);
-          regval |= pinmask;
+          regval &= ~pinmask;
           putreg32(regval, base + RM57_GIO_PSL_OFFSET);
 
           /* Enable pull functionality */
 
           regval  = getreg32(base + RM57_GIO_PULDIS_OFFSET);
-          regval |= pinmask;
+          regval &= ~pinmask;
           putreg32(regval, base + RM57_GIO_PULDIS_OFFSET);
         }
         break;

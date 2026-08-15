@@ -84,14 +84,32 @@
 /* Port n base address: Port A and Port B are 0x20 bytes apart */
 #define RM57_GIO_PORTBASE(n)      (RM57_GIO_PORTA_BASE + ((n) << 5))
 
-/* GIO Interrupt Enable Clear / Priority Clear Register: one byte per
- * port, one bit per pin within the byte
+/* GIO Interrupt Enable Set/Clear and Priority Set/Clear Registers: one byte
+ * per port, one bit per pin within the byte.  The Set and Clear registers of
+ * a pair share the same layout; writing a 1 acts, writing a 0 is ignored.
  */
 
+#define GIO_ENASET_PORT_SHIFT(p)  ((p) << 3)
+#define GIO_ENASET_PORT_PIN(p,n)  (1 << (GIO_ENASET_PORT_SHIFT(p) + (n)))
 #define GIO_ENACLR_PORT_SHIFT(p)  ((p) << 3)
 #define GIO_ENACLR_PORT_PIN(p,n)  (1 << (GIO_ENACLR_PORT_SHIFT(p) + (n)))
+#define GIO_LVLSET_PORT_SHIFT(p)  ((p) << 3)
+#define GIO_LVLSET_PORT_PIN(p,n)  (1 << (GIO_LVLSET_PORT_SHIFT(p) + (n)))
 #define GIO_LVLCLR_PORT_SHIFT(p)  ((p) << 3)
 #define GIO_LVLCLR_PORT_PIN(p,n)  (1 << (GIO_LVLCLR_PORT_SHIFT(p) + (n)))
+
+/* GIO Interrupt Polarity / Detect / Flag Registers: same one-byte-per-port,
+ * one-bit-per-pin layout as the ENA/LVL registers above.  A GIOFLG bit is
+ * cleared by writing a 1 to it (or by reading the corresponding offset
+ * register); writing a 0 has no effect.
+ */
+
+#define GIO_POL_PORT_SHIFT(p)     ((p) << 3)
+#define GIO_POL_PORT_PIN(p,n)     (1 << (GIO_POL_PORT_SHIFT(p) + (n)))
+#define GIO_INTDET_PORT_SHIFT(p)  ((p) << 3)
+#define GIO_INTDET_PORT_PIN(p,n)  (1 << (GIO_INTDET_PORT_SHIFT(p) + (n)))
+#define GIO_FLG_PORT_SHIFT(p)     ((p) << 3)
+#define GIO_FLG_PORT_PIN(p,n)     (1 << (GIO_FLG_PORT_SHIFT(p) + (n)))
 
 /* Register Bit-Field Definitions *******************************************/
 
@@ -99,6 +117,17 @@
 
 /* Bit 0: Take GIO module out of reset */
 #define GIO_GCR0_RESET (1 << 0)
+
+/* Interrupt Offset Registers (OFF1/OFF2): 0 means no interrupt pending;
+ * a nonzero value is (port << 3 | pin) + 1 for the highest-priority
+ * pending pin.  OFF1 reports the level A (high level) pins, OFF2 the
+ * level B (low level) pins.  Reading an offset register clears it, the
+ * matching EMUn mirror, and the corresponding GIOFLG bit, so the register
+ * can be read in a loop until it returns zero to drain every pending pin.
+ * EMU1/EMU2 are non-destructive mirrors intended for debugger reads.
+ */
+
+#define GIO_OFF_NONE   (0x00)    /* No interrupt pending */
 
 /* Per-pin bitmasks for GIOA0-GIOA7/GIOB0-GIOB7 are computed at the
  * pinset-encoding level (see rm57_gio_pinmask() / GIO_PINn in

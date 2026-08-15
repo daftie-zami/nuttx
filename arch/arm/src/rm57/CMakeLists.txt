@@ -25,6 +25,7 @@ set(SRCS
     rm57_clockconfig.c
     rm57_mpuinit.c
     rm57_gio.c
+    rm57_gioirq.c
     rm57_irq.c
     rm57_lowputc.c
     rm57_serial.c

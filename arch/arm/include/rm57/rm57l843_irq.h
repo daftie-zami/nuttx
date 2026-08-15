@@ -159,11 +159,40 @@
 #define RM57_REQ_CRC2               121 /* CRC2 interrupt */
 #define RM57_REQ_EPCFULL            124 /* EPC FIFO full interrupt */
 
-/* Second-level GIO pin interrupt demux is not yet implemented for RM57 -
- * no extra IRQ numbers are allocated for it here, matching TMS570's
- * "#else ... 0" case.
+/* Second-level GIO pin interrupt demux, enabled by CONFIG_RM57_GIO_IRQ.
+ * RM57L843 has only 2 GIO ports (A, B), unlike TMS570's up to 4/8, so
+ * only GIOA0-7/GIOB0-7 are allocated here.
+ *
+ * These numbers start at RM57_IRQ_NCHANNELS (127), which is free because
+ * VIM channels 0-126 occupy IRQs 0-126 and channel 127 is reserved.  That
+ * keeps the whole block inside NR_IRQS, which irq.h computes as
+ * RM57_IRQ_NCHANNELS + RM57_NGIO_IRQS.  The sibling TMS570 header bases
+ * this block at NCHANNELS+1 instead, which pushes its last GIO IRQ one
+ * past NR_IRQS where irq_attach()/irq_dispatch() reject it.
  */
 
-#define RM57_NGIO_IRQS               0
+#ifdef CONFIG_RM57_GIO_IRQ
+#  define RM57_IRQ_GIOA0            (RM57_IRQ_NCHANNELS+0)
+#  define RM57_IRQ_GIOA1            (RM57_IRQ_NCHANNELS+1)
+#  define RM57_IRQ_GIOA2            (RM57_IRQ_NCHANNELS+2)
+#  define RM57_IRQ_GIOA3            (RM57_IRQ_NCHANNELS+3)
+#  define RM57_IRQ_GIOA4            (RM57_IRQ_NCHANNELS+4)
+#  define RM57_IRQ_GIOA5            (RM57_IRQ_NCHANNELS+5)
+#  define RM57_IRQ_GIOA6            (RM57_IRQ_NCHANNELS+6)
+#  define RM57_IRQ_GIOA7            (RM57_IRQ_NCHANNELS+7)
+
+#  define RM57_IRQ_GIOB0            (RM57_IRQ_NCHANNELS+8)
+#  define RM57_IRQ_GIOB1            (RM57_IRQ_NCHANNELS+9)
+#  define RM57_IRQ_GIOB2            (RM57_IRQ_NCHANNELS+10)
+#  define RM57_IRQ_GIOB3            (RM57_IRQ_NCHANNELS+11)
+#  define RM57_IRQ_GIOB4            (RM57_IRQ_NCHANNELS+12)
+#  define RM57_IRQ_GIOB5            (RM57_IRQ_NCHANNELS+13)
+#  define RM57_IRQ_GIOB6            (RM57_IRQ_NCHANNELS+14)
+#  define RM57_IRQ_GIOB7            (RM57_IRQ_NCHANNELS+15)
+
+#  define RM57_NGIO_IRQS            16
+#else
+#  define RM57_NGIO_IRQS            0
+#endif
 
 #endif /* __ARCH_ARM_INCLUDE_RM57_RM57L843_IRQ_H */

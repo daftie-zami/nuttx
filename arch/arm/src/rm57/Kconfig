@@ -117,6 +117,13 @@ config RM57_LIN
 		not enforced here, since e.g. SCI1 could run in SCI mode while
 		SCI2/LIN2 runs in LIN mode.
 
+config RM57_GIO_IRQ
+	bool "GIO pin interrupts"
+	default n
+	---help---
+		Build in support for a second level of interrupt decoding for
+		GIO pins. Required for CONFIG_ARCH_IRQBUTTONS on this chip.
+
 config RM57_SERIAL_RXDMA_BUFFER_SIZE
 	int "RX DMA buffer size"
 	default 64
