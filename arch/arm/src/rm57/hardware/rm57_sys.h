@@ -188,6 +188,8 @@
 #define RM57_SYS_RAMGCR             (RM57_SYS1_BASE + RM57_SYS_RAMGCR_OFFSET)
 #define RM57_SYS_CPURSTCR (RM57_SYS1_BASE + RM57_SYS_CPURSTCR_OFFSET)
 #define RM57_SYS_CLKCNTL            (RM57_SYS1_BASE + RM57_SYS_CLKCNTL_OFFSET)
+#define RM57_SYS_SYSPC1             (RM57_SYS1_BASE + RM57_SYS_SYSPC1_OFFSET)
+#define RM57_SYS_ECPCNTL            (RM57_SYS1_BASE + RM57_SYS_ECPCNTL_OFFSET)
 #define RM57_SYS_SYSECR             (RM57_SYS1_BASE + RM57_SYS_SYSECR_OFFSET)
 #define RM57_SYS_SYSESR             (RM57_SYS1_BASE + RM57_SYS_SYSESR_OFFSET)
 #define RM57_SYS_GBLSTAT            (RM57_SYS1_BASE + RM57_SYS_GBLSTAT_OFFSET)
@@ -228,6 +230,29 @@
 #define SYS_CDDIS_RTICLK1OFF         (1 << 6)  /* Bit 6: RTICLK1 domain off */
 #define SYS_CDDIS_VCLK3OFF           (1 << 8)  /* Bit 8: VCLK3 domain off (EMAC MDIO bus clock) */
 #define SYS_CDDIS_VCLKA4OFF          (1 << 11) /* Bit 11: VCLKA4 domain off (EMAC clock) */
+
+/* SYS Pin Control Register 1 (SYSPC1) and ECP Control Register (ECPCNTL).
+ *
+ * Together these drive the ECLK1 terminal, which on some boards is the
+ * only clock source an external device has (see BOARD_ECLK1_DIV in the
+ * board's board.h).  SPNU562A Section 2.4.6.3: "The actual clock output
+ * on ECLK1 is enabled by setting the ECP CLK FUN bit of the SYSPC1
+ * control register.  By default, the ECLK1 terminal is in GIO mode."
+ */
+
+#define SYS_SYSPC1_ECPCLKFUN         (1 << 0)  /* Bit 0: 0=GIO, 1=clock output */
+
+#define SYS_ECPCNTL_ECPDIV_SHIFT     (0)       /* Bits 0-15: ECLK = source/(ECPDIV+1) */
+#define SYS_ECPCNTL_ECPDIV_MASK      (0xffff << SYS_ECPCNTL_ECPDIV_SHIFT)
+#  define SYS_ECPCNTL_ECPDIV(n)      ((uint32_t)(n) << SYS_ECPCNTL_ECPDIV_SHIFT)
+
+/* Bit 23: 0=ECLK stops in JTAG suspend, 1=ECLK keeps running */
+
+#define SYS_ECPCNTL_ECPCOS           (1 << 23)
+
+/* Bit 24: 0=VCLK is the ECP clock source, 1=OSCIN */
+
+#define SYS_ECPCNTL_ECPSSEL          (1 << 24)
 
 /* GCLK, HCLK, VCLK, VCLK2 Source Register clock source aliases */
 

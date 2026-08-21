@@ -90,7 +90,7 @@ Only the pins used by the currently supported peripherals are listed.
      - User LED B7
    * - V5 / G3
      - MDIO_CLK / MDIO_D
-     - MDIO bus shared by the EMAC's PHY (DP83640, address 1)
+     - MDIO bus shared by the EMAC's PHY (DP83630, address 1)
    * - D19 / E18 / R2 / J19 / J18
      - MII_TX_CLK / MII_TXD[3:0]
      - EMAC transmit, MII mode
@@ -206,7 +206,7 @@ only with the transfers themselves done by DMA.
 eth
 ---
 
-NuttShell plus the EMAC (``CONFIG_RM57_EMAC=y``, MII mode, DP83640 PHY
+NuttShell plus the EMAC (``CONFIG_RM57_EMAC=y``, MII mode, DP83630 PHY
 at address 1), with the full IPv4 stack (TCP/UDP/ICMP/ARP),
 ``CONFIG_NETDEV_LATEINIT`` (so board bring-up can derive a real,
 die-ID-based MAC address before registering the interface - see

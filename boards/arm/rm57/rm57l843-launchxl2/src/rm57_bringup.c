@@ -27,6 +27,10 @@
 #include <nuttx/config.h>
 
 #include <sys/types.h>
+#include <sys/mount.h>
+#include <syslog.h>
+
+#include <nuttx/fs/fs.h>
 
 #include <nuttx/board.h>
 #include <nuttx/irq.h>
@@ -98,12 +102,35 @@ static int rm57_button_b5_isr(int irq, FAR void *context, FAR void *arg)
 
 int rm57_bringup(void)
 {
+#if defined(CONFIG_FS_PROCFS) && defined(CONFIG_NSH_PROC_MOUNTPOINT)
+  /* NSH does not mount procfs itself - it only uses
+   * CONFIG_NSH_PROC_MOUNTPOINT for path matching - so without this ifconfig
+   * and the rest of /proc need a manual mount.  Not fatal if it fails.
+   */
+
+  int procfs_ret = nx_mount(NULL, CONFIG_NSH_PROC_MOUNTPOINT, "procfs", 0,
+                            NULL);
+  if (procfs_ret < 0)
+    {
+      syslog(LOG_ERR, "ERROR: Failed to mount procfs at %s: %d\n",
+             CONFIG_NSH_PROC_MOUNTPOINT, procfs_ret);
+    }
+#endif
+
 #ifdef CONFIG_RM57_DCAN
   int ret = rm57_can_setup();
   if (ret < 0)
     {
       return ret;
     }
+#endif
+
+#ifdef CONFIG_RM57_EMAC
+  /* Release the PHY from power-down/reset before anything can bring the
+   * interface up and start talking to it over MDIO.
+   */
+
+  rm57_phy_powerup();
 #endif
 
 #if defined(CONFIG_RM57_EMAC) && defined(CONFIG_NETDEV_LATEINIT)

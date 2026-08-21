@@ -474,7 +474,7 @@ choice
 	prompt "PHY interface mode"
 	default RM57_EMAC_MII
 	---help---
-		The LAUNCHXL2-RM57L carries a DP83640 PHY wired for MII; the
+		The LAUNCHXL2-RM57L carries a DP83630 PHY wired for MII; the
 		reset default IOMM selection is RMII, so MII must be
 		explicitly selected here to match that board.
 
@@ -547,6 +547,18 @@ config RM57_EMAC_LOOPBACK
 		so the descriptor ring and interrupt path can be exercised
 		standalone without a PHY or cable - the RM57_DCAN_LOOPBACK
 		equivalent for Ethernet.
+
+config RM57_EMAC_PROMISC
+	bool "Promiscuous mode (RXMBPENABLE.RXCAFEN)"
+	default n
+	---help---
+		Copy every frame the PHY delivers to RX channel 0, instead of
+		only those matching the MAC address filter plus broadcast.
+		Debug aid: if traffic is only received with this set, the
+		problem is in the address filter (MACINDEX/MACADDRHI/MACADDRLO
+		or RXUNICASTSET) rather than in the PHY, the descriptor ring or
+		the interrupt path.  Leave it off in production - it hands the
+		CPU every frame on the segment.
 
 config RM57_EMAC_REGDEBUG
 	bool "Register-level debug"

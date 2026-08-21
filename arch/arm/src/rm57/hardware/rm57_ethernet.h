@@ -497,9 +497,9 @@
 #define EMAC_MACSTATUS_RXERRCH_MASK  (7 << EMAC_MACSTATUS_RXERRCH_SHIFT)
 #define EMAC_MACSTATUS_RXERRCODE_SHIFT 12
 #define EMAC_MACSTATUS_RXERRCODE_MASK  (15 << EMAC_MACSTATUS_RXERRCODE_SHIFT)
-#define EMAC_MACSTATUS_TXERRCH_SHIFT 20
+#define EMAC_MACSTATUS_TXERRCH_SHIFT 16
 #define EMAC_MACSTATUS_TXERRCH_MASK  (7 << EMAC_MACSTATUS_TXERRCH_SHIFT)
-#define EMAC_MACSTATUS_TXERRCODE_SHIFT 24
+#define EMAC_MACSTATUS_TXERRCODE_SHIFT 20
 #define EMAC_MACSTATUS_TXERRCODE_MASK  (15 << EMAC_MACSTATUS_TXERRCODE_SHIFT)
 #define EMAC_MACSTATUS_IDLE          (1u << 31)
 
@@ -557,8 +557,20 @@ struct rm57_emac_desc_s
 {
   volatile struct rm57_emac_desc_s *next; /* Next descriptor pointer (0 = last) */
   volatile uint8_t *buffer;               /* Byte-aligned packet buffer pointer */
-  volatile uint16_t bufoff;               /* Unused leading bytes (SOP desc only) */
+
+  /* Word 2: "Buffer Offset(MSW) and Length(LSW)" (TRM Example 31-1).  On
+   * this little-endian target the first-declared of a pair of uint16_t
+   * fields lands in the word's low half, so buflen (the LSW) has to be
+   * declared before bufoff (the MSW) - the reverse of their natural
+   * reading order - or the hardware reads buflen as the offset and
+   * bufoff as the length.  Getting this backwards has EMAC report a
+   * transmit host error with MACSTATUS.TXERRCODE = 5 ("zero buffer
+   * length"), since bufoff is always 0.
+   */
+
   volatile uint16_t buflen;               /* Valid bytes in this buffer */
+  volatile uint16_t bufoff;               /* Unused leading bytes (SOP desc only) */
+
   volatile uint32_t flags_pktlen;         /* Flags (bits 31-16) | packet length (bits 15-0) */
 };
 

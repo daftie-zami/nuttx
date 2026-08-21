@@ -166,7 +166,7 @@ channel that halted between the driver reading its tail and appending a
 new descriptor.
 
 ``CONFIG_RM57_EMAC_MII`` / ``CONFIG_RM57_EMAC_RMII`` select the PHY
-interface mode; the LAUNCHXL2-RM57L's DP83640 PHY is wired for MII, while
+interface mode; the LAUNCHXL2-RM57L's DP83630 PHY is wired for MII, while
 the IOMM reset default is RMII, so MII must be explicitly selected to
 match that board. The EMAC's internal logic clock (``VCLKA4_DIVR_EMAC``)
 must be exactly 25MHz for MII or 50MHz for RMII (SPNS215 Section 6.6.3);
