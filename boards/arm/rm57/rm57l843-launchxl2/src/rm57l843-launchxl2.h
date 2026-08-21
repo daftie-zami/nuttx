@@ -47,6 +47,33 @@
 #define GIO_BUTTON_B5 (GIO_INPUT | GIO_CFG_PULLUP | GIO_INT_BOTHEDGES | \
                        GIO_PORT_GIOB | GIO_PIN5)
 
+#ifdef CONFIG_RM57_EMAC
+
+/* Ethernet PHY control lines.
+ *
+ * Both of the DP83630's control inputs are wired to GIOA on this board
+ * (docs/sprr397.pdf sheet 12) and both default to the state that keeps
+ * the PHY switched off, so firmware has to drive them - see
+ * rm57_phy_powerup() in src/rm57_ethernet.c.
+ *
+ * PWRDOWN/INTN (PHY pin 7) comes from GIOA[3] (ball E1) and additionally
+ * carries a hard 2.2k pulldown (RP11B), so the pin has to be a push-pull
+ * output driven high to bring the PHY out of power-down.
+ *
+ * RESET_N (PHY pin 29) comes from GIOA[4] (ball A6).  Nothing else on
+ * the board drives it: there is no RC power-on-reset, no supervisor and
+ * no pull-up, and GIOA[4] powers up as an input with a 20uA internal
+ * pulldown - so out of reset the PHY is held in reset indefinitely.
+ * Configured asserted (low) here; rm57_phy_powerup() releases it.
+ */
+
+#  define GIO_PHY_PWRDOWN (GIO_OUTPUT | GIO_CFG_DEFAULT | GIO_OUTPUT_SET | \
+                           GIO_PORT_GIOA | GIO_PIN3)
+#  define GIO_PHY_RESET   (GIO_OUTPUT | GIO_CFG_DEFAULT | \
+                           GIO_OUTPUT_CLEAR | GIO_PORT_GIOA | GIO_PIN4)
+
+#endif /* CONFIG_RM57_EMAC */
+
 /****************************************************************************
  * Public Function Prototypes
  ****************************************************************************/
@@ -86,6 +113,20 @@ int rm57_can_setup(void);
 
 #if defined(CONFIG_RM57_EMAC) && defined(CONFIG_NETDEV_LATEINIT)
 int rm57_eth_setup(void);
+#endif
+
+/****************************************************************************
+ * Name: rm57_phy_powerup
+ *
+ * Description:
+ *   Release the Ethernet PHY from power-down and reset.  Must run before
+ *   the EMAC driver first touches the MDIO bus - see the GIO_PHY_*
+ *   definitions above and src/rm57_ethernet.c.
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_RM57_EMAC
+void rm57_phy_powerup(void);
 #endif
 
 #endif /* __BOARDS_ARM_RM57_RM57L843_LAUNCHXL2_SRC_RM57L843_LAUNCHXL2_H */

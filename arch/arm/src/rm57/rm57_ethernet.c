@@ -99,6 +99,11 @@
 #include "rm57_ethernet.h"
 #include "rm57_mdio.h"
 
+#ifdef CONFIG_RM57_EMAC_REGDEBUG
+#  include "hardware/rm57_iomm.h"
+#  include "hardware/rm57_sys.h"
+#endif
+
 #ifdef CONFIG_RM57_EMAC
 
 /****************************************************************************
@@ -151,6 +156,26 @@
 
 #define RM57_EMAC_ANEG_POLL_MS    10
 #define RM57_EMAC_ANEG_MAX_POLLS  500
+
+/* Settle poll for rm57emac_linkupdate(): covers the small gap between BMSR
+ * reporting LINKSTATUS and reporting ANEGCOMPLETE.  1ms steps; longer than
+ * this means autonegotiation is not running at all.
+ */
+
+#define RM57_EMAC_ANEG_LATCH_POLLS 20
+
+/* ALIVE poll: the MDIO module's PHY-detect state machine needs to
+ * complete at least one full sweep of all 32 addresses after CONTROL.
+ * ENABLE is set before ALIVE reflects a connected PHY (SPNU562A
+ * 31.2.8.2.1 step 3: "The MDIO PHY alive status register (ALIVE) can
+ * be read in polling fashion until a PHY connected to the system
+ * responded") - a single immediate read races that sweep and always
+ * reports 0.  1ms steps, 100ms bound is generous for one sweep at the
+ * slowest permitted MDIO clock.
+ */
+
+#define RM57_EMAC_ALIVE_POLL_MS    1
+#define RM57_EMAC_ALIVE_MAX_POLLS  100
 
 /****************************************************************************
  * Private Types
@@ -240,6 +265,7 @@ static void rm57emac_dopoll(FAR struct rm57_ethmac_s *priv);
 
 static void rm57emac_dispatch(FAR struct rm57_ethmac_s *priv);
 static void rm57emac_receive(FAR struct rm57_ethmac_s *priv);
+static void rm57emac_txreap(FAR struct rm57_ethmac_s *priv);
 static void rm57emac_txdone(FAR struct rm57_ethmac_s *priv);
 
 static void rm57emac_rx_work(FAR void *arg);
@@ -353,16 +379,33 @@ static int rm57emac_transmit(FAR struct rm57_ethmac_s *priv)
   FAR struct net_driver_s *dev = &priv->dev;
   FAR struct rm57_emac_desc_s *desc = priv->txnext;
   size_t idx = desc - RM57_EMAC_TXRING;
+  uint16_t txlen = dev->d_len;
+
+  /* The 802.3 minimum frame is 64 bytes on the wire, i.e. 60 bytes of
+   * header+payload before the 4-byte CRC the EMAC appends itself
+   * (PASSCRC is left clear).  ARP requests/replies are only 42 bytes
+   * and nothing pads them out upstream, so without this a short frame
+   * either gets silently dropped as a runt by the far end or, worse,
+   * transmits whatever stale bytes happen to follow the packet in the
+   * buffer.  The buffer is sized for a full MTU (RM57_EMAC_BUFSIZE), so
+   * there is always room to extend it.
+   */
+
+  if (txlen < 60)
+    {
+      memset(dev->d_buf + txlen, 0, 60 - txlen);
+      txlen = 60;
+    }
 
   desc->buffer = (FAR uint8_t *)dev->d_buf;
   desc->bufoff = 0;
-  desc->buflen = dev->d_len;
+  desc->buflen = txlen;
 
   up_clean_dcache((uintptr_t)dev->d_buf,
-                  (uintptr_t)dev->d_buf + dev->d_len);
+                  (uintptr_t)dev->d_buf + txlen);
 
   desc->flags_pktlen = EMAC_DESC_SOP | EMAC_DESC_EOP | EMAC_DESC_OWNER |
-                       (dev->d_len & EMAC_DESC_PKTLEN_MASK);
+                       (txlen & EMAC_DESC_PKTLEN_MASK);
 
   rm57emac_enqueue(RM57_EMAC_TXHDP(0), &priv->txtail, desc);
 
@@ -373,6 +416,19 @@ static int rm57emac_transmit(FAR struct rm57_ethmac_s *priv)
            rm57emac_txtimeout_expiry, (wdparm_t)priv);
 
   NETDEV_TXPACKETS(dev);
+
+  /* The descriptor owns this buffer now, so drop the network layer's
+   * reference.  Left set, the -EBUSY path in rm57emac_txpoll() returns with
+   * d_buf still pointing at it, devif_poll() restores that pointer and
+   * rm57emac_dopoll() frees it while the DMA is still reading - then
+   * rm57emac_txdone() frees it a second time, which loops the free list onto
+   * itself and leaves every descriptor sharing one buffer.  Must stay after
+   * NETDEV_TXPACKETS(), which reads d_len for tx_bytes.
+   */
+
+  dev->d_buf = NULL;
+  dev->d_len = 0;
+
   return OK;
 }
 
@@ -508,7 +564,22 @@ static void rm57emac_dispatch(FAR struct rm57_ethmac_s *priv)
 
   if (dev->d_len > 0)
     {
-      FAR uint8_t *txbuf = rm57emac_allocbuffer(priv);
+      FAR uint8_t *txbuf;
+
+      /* Reclaim finished descriptors before calling the ring full.  All EMAC
+       * work shares one LPWORK thread, so rm57emac_tx_work() cannot run
+       * until this RX burst ends and the ring would fill even though the
+       * hardware is long done with it.  rm57emac_txreap() is used rather
+       * than rm57emac_txdone() because it does not call rm57emac_dopoll(),
+       * which would re-enter devif_poll() from inside a dispatch.
+       */
+
+      if (priv->txused >= RM57_EMAC_NTXDESC)
+        {
+          rm57emac_txreap(priv);
+        }
+
+      txbuf = rm57emac_allocbuffer(priv);
 
       if (txbuf != NULL && priv->txused < RM57_EMAC_NTXDESC)
         {
@@ -523,6 +594,17 @@ static void rm57emac_dispatch(FAR struct rm57_ethmac_s *priv)
             {
               rm57emac_freebuffer(priv, txbuf);
             }
+
+          /* The stack believes this packet was sent, so a silent drop costs
+           * a full RTO before TCP notices.  A recurring warning here means
+           * the TX ring is not draining.
+           */
+
+          nwarn("WARNING: TX pool exhausted, dropped %u bytes "
+                "(txused=%u/%u, buf=%s)\n",
+                (unsigned)dev->d_len, (unsigned)priv->txused,
+                (unsigned)RM57_EMAC_NTXDESC,
+                txbuf != NULL ? "ok" : "none");
 
           NETDEV_TXERRORS(dev);
         }
@@ -539,12 +621,18 @@ static void rm57emac_dispatch(FAR struct rm57_ethmac_s *priv)
  *   (OWNER clear), dispatching each good frame and immediately re-arming
  *   and re-appending the same descriptor/buffer.
  *
+ *   Handles the same EOQ race as the TX path (SPNU562A Section
+ *   31.2.6.4.9): a completed descriptor that halted the channel has to
+ *   restart it explicitly, otherwise reception stops for good.
+ *
  ****************************************************************************/
 
 static void rm57emac_receive(FAR struct rm57_ethmac_s *priv)
 {
   FAR struct net_driver_s *dev = &priv->dev;
   FAR struct rm57_emac_desc_s *desc;
+  FAR volatile struct rm57_emac_desc_s *next;
+  bool eoq;
   size_t idx;
   int bound;
 
@@ -558,6 +646,13 @@ static void rm57emac_receive(FAR struct rm57_ethmac_s *priv)
         }
 
       putreg32((uint32_t)(uintptr_t)desc, RM57_EMAC_RXCP(0));
+
+      /* Latch the EOQ state now: flags_pktlen is overwritten by the
+       * re-arm below and next by the rm57emac_enqueue() after it.
+       */
+
+      eoq  = (desc->flags_pktlen & EMAC_DESC_EOQ) != 0;
+      next = desc->next;
 
       if ((desc->flags_pktlen & (EMAC_DESC_SOP | EMAC_DESC_EOP)) ==
           (EMAC_DESC_SOP | EMAC_DESC_EOP) &&
@@ -587,7 +682,17 @@ static void rm57emac_receive(FAR struct rm57_ethmac_s *priv)
           NETDEV_RXERRORS(dev);
         }
 
-      /* Re-arm this descriptor with the same (fixed) buffer */
+      /* Re-arm this descriptor with the same (fixed) buffer.  netdev_input()
+       * copies the stack's reply back into this buffer (iob_copyout()), and
+       * SRAM is write-back, so those dirty lines must go before the DMA owns
+       * the buffer again - otherwise they are evicted over the next frame.
+       * Discarding is safe: rm57emac_dispatch() has already copied any reply
+       * into a TX pool buffer.  The invalidate above is still needed as well;
+       * it drops lines the core may have speculatively filled.
+       */
+
+      up_invalidate_dcache((uintptr_t)desc->buffer,
+                           (uintptr_t)desc->buffer + RM57_EMAC_BUFSIZE);
 
       desc->bufoff = 0;
       desc->buflen = RM57_EMAC_BUFSIZE;
@@ -596,12 +701,33 @@ static void rm57emac_receive(FAR struct rm57_ethmac_s *priv)
       idx = desc - RM57_EMAC_RXRING;
       priv->rxnext = &RM57_EMAC_RXRING[(idx + 1) % RM57_EMAC_NRXDESC];
 
+      /* If this descriptor halted the channel, restart it: either at the
+       * descriptor that had already been linked behind it while the halt
+       * was in flight, or - when it was the last one in the queue - by
+       * dropping the tail so that the rm57emac_enqueue() below writes
+       * RXHDP again with this just re-armed descriptor.  Without this the
+       * queue never restarts: rxtail would stay non-NULL forever and
+       * RXHDP would keep the stale value written by rm57emac_rxdescinit().
+       */
+
+      if (eoq)
+        {
+          if (next != NULL)
+            {
+              putreg32((uint32_t)(uintptr_t)next, RM57_EMAC_RXHDP(0));
+            }
+          else
+            {
+              priv->rxtail = NULL;
+            }
+        }
+
       rm57emac_enqueue(RM57_EMAC_RXHDP(0), &priv->rxtail, desc);
     }
 }
 
 /****************************************************************************
- * Name: rm57emac_txdone
+ * Name: rm57emac_txreap
  *
  * Description:
  *   Walk the TX ring from priv->txreclaim while descriptors have
@@ -611,9 +737,12 @@ static void rm57emac_receive(FAR struct rm57_ethmac_s *priv)
  *   descriptor linked after it (appended while the halt was in flight),
  *   restart the channel there.
  *
+ *   Deliberately does not poll the network layer, so that it is safe to
+ *   call from rm57emac_dispatch().  See rm57emac_txdone().
+ *
  ****************************************************************************/
 
-static void rm57emac_txdone(FAR struct rm57_ethmac_s *priv)
+static void rm57emac_txreap(FAR struct rm57_ethmac_s *priv)
 {
   FAR struct rm57_emac_desc_s *desc;
   size_t idx;
@@ -645,12 +774,46 @@ static void rm57emac_txdone(FAR struct rm57_ethmac_s *priv)
 
       rm57emac_freebuffer(priv, (FAR uint8_t *)desc->buffer);
 
+      /* Count the completion, not just the enqueue; otherwise ifconfig's TX
+       * "Sent" column stays at zero however much traffic passes.
+       */
+
+      NETDEV_TXDONE(&priv->dev);
+
       idx = desc - RM57_EMAC_TXRING;
       priv->txreclaim = &RM57_EMAC_TXRING[(idx + 1) % RM57_EMAC_NTXDESC];
       priv->txused--;
     }
+}
 
-  wd_cancel(&priv->txtimeout);
+/****************************************************************************
+ * Name: rm57emac_txdone
+ *
+ * Description:
+ *   Reclaim completed TX descriptors, then re-evaluate the TX watchdog and
+ *   give the network layer another poll.
+ *
+ ****************************************************************************/
+
+static void rm57emac_txdone(FAR struct rm57_ethmac_s *priv)
+{
+  rm57emac_txreap(priv);
+
+  /* Only disarm the watchdog once the ring has drained; re-arm it while
+   * frames are still in flight.  Cancelling unconditionally left no recovery
+   * path for a missed completion: txused would stay non-zero and the ring
+   * would look permanently full from then on.
+   */
+
+  if (priv->txused == 0)
+    {
+      wd_cancel(&priv->txtimeout);
+    }
+  else
+    {
+      wd_start(&priv->txtimeout, RM57_EMAC_TXTIMEOUT,
+               rm57emac_txtimeout_expiry, (wdparm_t)priv);
+    }
 
   if (priv->txused < RM57_EMAC_NTXDESC)
     {
@@ -781,9 +944,19 @@ static void rm57emac_misc_work(FAR void *arg)
   if ((macintstat & EMAC_MACINT_HOSTPEND) != 0)
     {
       uint32_t macstatus = getreg32(RM57_EMAC_MACSTATUS);
+      uint32_t txerrcode = (macstatus & EMAC_MACSTATUS_TXERRCODE_MASK) >>
+                           EMAC_MACSTATUS_TXERRCODE_SHIFT;
 
       nerr("ERROR: EMAC host error, MACSTATUS=%08" PRIx32
-           " - resetting\n", macstatus);
+           " TXERRCODE=%" PRIu32 " TXERRCH=%" PRIu32
+           " RXERRCODE=%" PRIu32 " RXERRCH=%" PRIu32
+           " - resetting\n", macstatus, txerrcode,
+           (macstatus & EMAC_MACSTATUS_TXERRCH_MASK) >>
+             EMAC_MACSTATUS_TXERRCH_SHIFT,
+           (macstatus & EMAC_MACSTATUS_RXERRCODE_MASK) >>
+             EMAC_MACSTATUS_RXERRCODE_SHIFT,
+           (macstatus & EMAC_MACSTATUS_RXERRCH_MASK) >>
+             EMAC_MACSTATUS_RXERRCH_SHIFT);
 
       net_lock();
       rm57emac_ifdown(&priv->dev);
@@ -889,6 +1062,23 @@ static void rm57emac_txtimeout_work(FAR void *arg)
   FAR struct rm57_ethmac_s *priv = (FAR struct rm57_ethmac_s *)arg;
 
   nerr("ERROR: EMAC TX timeout - resetting\n");
+
+  /* Dump the collision counters before the reset below re-initialises the
+   * MAC.  Non-zero late/excessive collisions mean the MAC is half duplex
+   * against a full-duplex peer; all-zero points at the descriptor ring.
+   * Otherwise these are only sampled on the rare STATPEND interrupt.
+   */
+
+  nerr("ERROR:   MACCONTROL=%08" PRIx32 " txused=%u/%u\n",
+       getreg32(RM57_EMAC_MACCONTROL), (unsigned)priv->txused,
+       (unsigned)RM57_EMAC_NTXDESC);
+  nerr("ERROR:   coll=%" PRId32 " single=%" PRId32 " multi=%" PRId32
+       " late=%" PRId32 " excess=%" PRId32 " carrier=%" PRId32
+       " underrun=%" PRId32 "\n",
+       getreg32(RM57_EMAC_TXCOLLISION), getreg32(RM57_EMAC_TXSINGLECOLL),
+       getreg32(RM57_EMAC_TXMULTICOLL), getreg32(RM57_EMAC_TXLATECOLL),
+       getreg32(RM57_EMAC_TXEXCESSIVECOLL),
+       getreg32(RM57_EMAC_TXCARRIERSENSE), getreg32(RM57_EMAC_TXUNDERRUN));
 
   net_lock();
   NETDEV_TXTIMEOUTS(&priv->dev);
@@ -1131,17 +1321,68 @@ static int rm57emac_phywrite(uint16_t phyaddr, uint8_t regaddr,
 
 static int rm57emac_phyfind(FAR struct rm57_ethmac_s *priv)
 {
-  uint32_t alive;
+  uint32_t alive = 0;
   uint16_t id1;
   uint16_t id2;
+  int i;
 
   priv->phyaddr = CONFIG_RM57_EMAC_PHYADDR;
 
-  alive = rm57_mdio_alive();
+  /* ALIVE only reflects a connected PHY once the MDIO module's
+   * autodetect state machine has swept all 32 addresses at least once
+   * since CONTROL.ENABLE was set - poll rather than sampling it once.
+   */
+
+  for (i = 0; i < RM57_EMAC_ALIVE_MAX_POLLS; i++)
+    {
+      alive = rm57_mdio_alive();
+      if ((alive & MDIO_ALIVE_PHY(priv->phyaddr)) != 0)
+        {
+          break;
+        }
+
+      up_mdelay(RM57_EMAC_ALIVE_POLL_MS);
+    }
+
   if ((alive & MDIO_ALIVE_PHY(priv->phyaddr)) == 0)
     {
+      uint32_t control = getreg32(RM57_MDIO_CONTROL);
+
       nerr("ERROR: No PHY responding at address %d (MDIO_ALIVE=%08"
            PRIx32 ")\n", priv->phyaddr, alive);
+
+      /* CONTROL.FAULT means the module drove the MDIO line and read
+       * back something else, i.e. a genuine physical-layer problem
+       * rather than simply nobody answering.
+       */
+
+      if ((control & MDIO_CONTROL_FAULT) != 0)
+        {
+          nerr("ERROR: MDIO physical layer fault (MDIO_CONTROL=%08"
+               PRIx32 ")\n", control);
+        }
+
+      /* The background sweep is not the only way to reach a PHY: fall
+       * back to explicit reads, the way HALCoGen's EMACHWInit() probes
+       * (HL_emac.c).  This distinguishes "the bus is dead" from "the
+       * PHY is at an address we did not expect" - a wrong strap latch
+       * shows up here as a hit at some other address.
+       */
+
+      for (i = 0; i < 32; i++)
+        {
+          uint16_t probe = 0xffff;
+
+          if (rm57emac_phyread(i, MII_PHYID1, &probe) == OK &&
+              probe != 0xffff && probe != 0x0000)
+            {
+              nerr("ERROR: but a PHY answered at address %d "
+                   "(MII_PHYID1=%04x) - check CONFIG_RM57_EMAC_PHYADDR\n",
+                   i, probe);
+              break;
+            }
+        }
+
       return -ENODEV;
     }
 
@@ -1154,23 +1395,14 @@ static int rm57emac_phyfind(FAR struct rm57_ethmac_s *priv)
 
   ninfo("PHY ID: %04x:%04x\n", id1, id2);
 
-#if defined(CONFIG_ETH0_PHY_DP83640)
-  if (id1 != MII_PHYID1_DP83640 ||
-      (id2 & ~MII_PHYID2_DP83640_REV_MASK) !=
-      (MII_PHYID2_DP83640 & ~MII_PHYID2_DP83640_REV_MASK))
+#if defined(CONFIG_ETH0_PHY_DP83630)
+  if (id1 != MII_PHYID1_DP83630 ||
+      (id2 & ~MII_PHYID2_DP83630_REV_MASK) !=
+      (MII_PHYID2_DP83630 & ~MII_PHYID2_DP83630_REV_MASK))
     {
       nwarn("WARNING: PHY ID %04x:%04x does not match configured "
-            "DP83640 (%04x:%04x)\n", id1, id2, MII_PHYID1_DP83640,
-            MII_PHYID2_DP83640);
-    }
-#elif defined(CONFIG_ETH0_PHY_TLK111)
-  if (id1 != MII_PHYID1_TLK111 ||
-      (id2 & ~MII_PHYID2_TLK111_REV_MASK) !=
-      (MII_PHYID2_TLK111 & ~MII_PHYID2_TLK111_REV_MASK))
-    {
-      nwarn("WARNING: PHY ID %04x:%04x does not match configured "
-            "TLK111 (%04x:%04x)\n", id1, id2, MII_PHYID1_TLK111,
-            MII_PHYID2_TLK111);
+            "DP83630 (%04x:%04x)\n", id1, id2, MII_PHYID1_DP83630,
+            MII_PHYID2_DP83630);
     }
 #endif
 
@@ -1205,10 +1437,59 @@ static void rm57emac_linkupdate(FAR struct rm57_ethmac_s *priv)
   {
     uint16_t adv = 0;
     uint16_t lpa = 0;
+    int retry;
 
-    rm57emac_phyread(priv->phyaddr, MII_ADVERTISE, &adv);
-    rm57emac_phyread(priv->phyaddr, MII_LPA, &lpa);
+    /* Do not latch a result until autonegotiation has finished.  LINKSTATUS
+     * can come up a moment before ANEGCOMPLETE, and the LINKINT0 handler
+     * enters here at an arbitrary instant, so the ANAR/ANLPAR intersection
+     * below could still read zero - which fell through to the terminal else
+     * and quietly programmed 10 Mbit half duplex.  There is no periodic link
+     * poll, so that would stand until the next link change.
+     */
+
+    for (retry = 0; retry < RM57_EMAC_ANEG_LATCH_POLLS; retry++)
+      {
+        if ((msr & MII_MSR_ANEGCOMPLETE) != 0)
+          {
+            break;
+          }
+
+        up_mdelay(1);
+
+        if (rm57emac_phyread(priv->phyaddr, MII_MSR, &msr) < 0)
+          {
+            nerr("ERROR: MII_MSR read failed while waiting for autoneg\n");
+            netdev_carrier_off(dev);
+            return;
+          }
+      }
+
+    /* A failed MDIO read leaves adv/lpa at 0, indistinguishable from
+     * "nothing negotiated".  Bail out instead of programming a duplex from
+     * it; MACCONTROL keeps whatever it already had.
+     */
+
+    if (rm57emac_phyread(priv->phyaddr, MII_ADVERTISE, &adv) < 0 ||
+        rm57emac_phyread(priv->phyaddr, MII_LPA, &lpa) < 0)
+      {
+        nerr("ERROR: PHY ANAR/ANLPAR read failed - link unchanged\n");
+        netdev_carrier_off(dev);
+        return;
+      }
+
     adv &= lpa;
+
+    /* An incomplete negotiation means the partner is forced, and 802.3
+     * parallel detection resolves to half duplex - what the fallback below
+     * selects anyway.  Say so, since arriving there by accident is exactly
+     * what this function used to hide.
+     */
+
+    if ((msr & MII_MSR_ANEGCOMPLETE) == 0)
+      {
+        nwarn("WARNING: Autonegotiation incomplete (MSR=%04x) - "
+              "falling back to half duplex\n", msr);
+      }
 
     if ((adv & MII_ADVERTISE_100BASETXFULL) != 0)
       {
@@ -1259,8 +1540,14 @@ static void rm57emac_linkupdate(FAR struct rm57_ethmac_s *priv)
 
   putreg32(macctrl, RM57_EMAC_MACCONTROL);
 
-  ninfo("Link up: %s Mbps %s duplex\n", priv->mbps100 ? "100" : "10",
-        priv->fduplex ? "full" : "half");
+  /* Warning level on purpose: the resolved duplex is the most useful fact
+   * about the link, and ninfo is compiled out of most builds.  MACCONTROL is
+   * read back so this reports what the hardware holds, not what was written.
+   */
+
+  nwarn("Link up: %s Mbps %s duplex (MACCONTROL=%08" PRIx32 ")\n",
+        priv->mbps100 ? "100" : "10", priv->fduplex ? "full" : "half",
+        getreg32(RM57_EMAC_MACCONTROL));
 
   netdev_carrier_on(dev);
 }
@@ -1359,10 +1646,22 @@ static int rm57emac_phyinit(FAR struct rm57_ethmac_s *priv)
  * Name: rm57emac_setmacaddr
  *
  * Description:
- *   Program one of the 8 per-channel MAC address match registers,
- *   following the exact MACINDEX/MACADDRHI/MACADDRLO write order and bit
- *   layout TI's HALCoGen EMACMACAddrSet() uses (SPNU562A Section
- *   31.5.43-31.5.45).
+ *   Program one of the 8 per-channel MAC address match registers, using
+ *   the MACINDEX/MACADDRHI/MACADDRLO write order of TI's HALCoGen
+ *   EMACMACAddrSet() (SPNU562A Section 31.5.43-31.5.45).
+ *
+ *   The byte order is NOT HALCoGen's, though: that function documents
+ *   its argument as "array[0] shall be the LSB of the MAC address", i.e.
+ *   an address stored backwards relative to wire order, which is not
+ *   what dev->d_mac holds.  The register fields are numbered by position
+ *   in the 48-bit address, not by position on the wire - Section 31.5.44
+ *   pins this down by placing the group bit, which is the low bit of the
+ *   first byte transmitted, in MACADDR5 (bit 40).  So MACADDR5, the low
+ *   byte of MACADDRHI, takes mac[0] and the fields run down to MACADDR0,
+ *   the high byte of MACADDRLO, taking mac[5].  Feeding a wire-order
+ *   address through HALCoGen's shifts instead programs the reversed
+ *   address: broadcast keeps working (RXBROADEN bypasses this filter)
+ *   while every unicast frame is counted in RXFILTERED and dropped.
  *
  ****************************************************************************/
 
@@ -1371,11 +1670,11 @@ static void rm57emac_setmacaddr(uint32_t channel, FAR const uint8_t *mac,
 {
   putreg32(channel, RM57_EMAC_MACINDEX);
 
-  putreg32((uint32_t)mac[5] | ((uint32_t)mac[4] << 8) |
-           ((uint32_t)mac[3] << 16) | ((uint32_t)mac[2] << 24),
+  putreg32((uint32_t)mac[0] | ((uint32_t)mac[1] << 8) |
+           ((uint32_t)mac[2] << 16) | ((uint32_t)mac[3] << 24),
            RM57_EMAC_MACADDRHI);
 
-  putreg32((uint32_t)mac[1] | ((uint32_t)mac[0] << 8) | matchfilt |
+  putreg32((uint32_t)mac[4] | ((uint32_t)mac[5] << 8) | matchfilt |
            EMAC_MACADDRLO_CHANNEL(channel),
            RM57_EMAC_MACADDRLO);
 }
@@ -1385,22 +1684,36 @@ static void rm57emac_macaddress(FAR struct rm57_ethmac_s *priv)
   FAR const uint8_t *mac = priv->dev.d_mac.ether.ether_addr_octet;
   uint32_t ch;
 
-  putreg32((uint32_t)mac[5] | ((uint32_t)mac[4] << 8) |
-           ((uint32_t)mac[3] << 16) | ((uint32_t)mac[2] << 24),
+  /* Same field numbering as MACADDRHI/LO above (Section 31.5.41-31.5.42) */
+
+  putreg32((uint32_t)mac[0] | ((uint32_t)mac[1] << 8) |
+           ((uint32_t)mac[2] << 16) | ((uint32_t)mac[3] << 24),
            RM57_EMAC_MACSRCADDRHI);
-  putreg32((uint32_t)mac[1] | ((uint32_t)mac[0] << 8),
+  putreg32((uint32_t)mac[4] | ((uint32_t)mac[5] << 8),
            RM57_EMAC_MACSRCADDRLO);
 
-  /* Program the same address on all 8 channels, whether used or not
-   * (SPNU562A Section 31.2.16.4 step 5: "duplicate the same MAC address
-   * across all unused channels").  Only channel 0 is actually enabled
-   * for reception (see rm57emac_configure()).
+  /* Program the same address into all 8 slots, whether the channel is
+   * used or not (SPNU562A Section 31.2.16.4 step 5: "Be sure to program
+   * all eight MAC address registers ... Duplicate the same MAC address
+   * across all unused channels"), but mark only channel 0 - the one this
+   * driver receives on - VALID.  Section 31.5.43 is explicit that VALID
+   * "should be cleared to 0 for unused address channels", and CHANNEL
+   * "determines which receive channel a valid address match will be
+   * transferred to": leaving all eight valid makes an incoming unicast
+   * frame match every slot, and a slot other than 0 then steers it to a
+   * channel that has neither descriptors nor an RXUNICASTSET bit, so the
+   * frame is dropped.  Broadcast is unaffected - RXBROADEN/RXBROADCH
+   * route it without consulting the address filter - which is why the
+   * symptom was DHCP and ARP working while every unicast frame (ping
+   * replies, DNS answers) vanished.
    */
 
   for (ch = 0; ch < 8; ch++)
     {
       rm57emac_setmacaddr(ch, mac,
-                          EMAC_MACADDRLO_VALID | EMAC_MACADDRLO_MATCHFILT);
+                          ch == 0 ?
+                          EMAC_MACADDRLO_VALID | EMAC_MACADDRLO_MATCHFILT :
+                          0);
     }
 }
 
@@ -1434,6 +1747,16 @@ static void rm57emac_txdescinit(FAR struct rm57_ethmac_s *priv)
 static void rm57emac_rxdescinit(FAR struct rm57_ethmac_s *priv)
 {
   int i;
+
+  /* Drop cached lines covering the RX pool before the DMA takes ownership.
+   * These buffers are .bss, and on an ifdown/ifup cycle they still hold the
+   * previous session's data, so dirty lines can exist here and would be
+   * evicted over the first frames received.
+   */
+
+  up_invalidate_dcache((uintptr_t)g_rm57emac_rxbuf,
+                       (uintptr_t)g_rm57emac_rxbuf +
+                       sizeof(g_rm57emac_rxbuf));
 
   for (i = 0; i < RM57_EMAC_NRXDESC; i++)
     {
@@ -1472,9 +1795,67 @@ static void rm57emac_rxdescinit(FAR struct rm57_ethmac_s *priv)
  *
  ****************************************************************************/
 
+#ifdef CONFIG_RM57_EMAC_REGDEBUG
+
+/****************************************************************************
+ * Name: rm57emac_regdump
+ *
+ * Description:
+ *   Dump the registers that separate the usual EMAC bring-up failures
+ *   from each other, so a bad board can be told apart from a bad
+ *   configuration without a debugger.
+ *
+ *   MDIO_REVID reading its reset value proves the module is powered and
+ *   clocked (PENA, the PCR2 power-down clears and VCLK3 are all good),
+ *   which narrows a silent MDIO bus down to the pin mux or the PHY.
+ *   PINMMR87 selects which ball the MDIO input is taken from and
+ *   PINMMR160 selects MII vs RMII; both are easy to get wrong and
+ *   neither reports an error when it is.  SYSPC1/ECPCNTL matter on
+ *   boards that clock their PHY from the MCU's ECLK1 terminal.
+ *
+ ****************************************************************************/
+
+static void rm57emac_regdump(void)
+{
+  ninfo("MDIO:  REVID=%08" PRIx32 " CONTROL=%08" PRIx32
+        " ALIVE=%08" PRIx32 " LINK=%08" PRIx32 "\n",
+        getreg32(RM57_MDIO_REVID), getreg32(RM57_MDIO_CONTROL),
+        getreg32(RM57_MDIO_ALIVE), getreg32(RM57_MDIO_LINK));
+
+  ninfo("EMAC:  CTRL_REVID=%08" PRIx32 " MACCONTROL=%08" PRIx32 "\n",
+        getreg32(RM57_EMAC_CTRL_REVID), getreg32(RM57_EMAC_MACCONTROL));
+
+  ninfo("IOMM:  PINMMR87=%08" PRIx32 " PINMMR160=%08" PRIx32 "\n",
+        getreg32(RM57_IOMM_PINMMR(87)), getreg32(RM57_IOMM_PINMMR(160)));
+
+  ninfo("SYS:   SYSPC1=%08" PRIx32 " ECPCNTL=%08" PRIx32 "\n",
+        getreg32(RM57_SYS_SYSPC1), getreg32(RM57_SYS_ECPCNTL));
+}
+
+#else
+#  define rm57emac_regdump()
+#endif
+
 static void rm57emac_reset(void)
 {
   int i;
+
+  /* Reset the EMAC control module first, then the EMAC itself - the
+   * order HALCoGen's EMACInit() uses (HL_emac.c).  The control module
+   * reset also clears the CPPI descriptor RAM, so it has to happen
+   * before rm57emac_txdescinit()/rm57emac_rxdescinit() populate it.
+   */
+
+  putreg32(EMAC_CTRL_SOFTRESET_RESET, RM57_EMAC_CTRL_SOFTRESET);
+
+  for (i = 0; i < 1000; i++)
+    {
+      if ((getreg32(RM57_EMAC_CTRL_SOFTRESET) &
+           EMAC_CTRL_SOFTRESET_RESET) == 0)
+        {
+          break;
+        }
+    }
 
   putreg32(EMAC_SOFTRESET_RESET, RM57_EMAC_SOFTRESET);
 
@@ -1550,10 +1931,19 @@ static int rm57emac_configure(FAR struct rm57_ethmac_s *priv)
   putreg32(0xff, RM57_EMAC_RXUNICASTCLEAR);
   putreg32(EMAC_RXUNICAST_CH(0), RM57_EMAC_RXUNICASTSET);
 
-  /* Step 10: broadcast + (initially disabled) multicast on channel 0 */
+  /* Step 10: broadcast + (initially disabled) multicast on channel 0.
+   * Under CONFIG_RM57_EMAC_PROMISC, RXCAFEN additionally copies every
+   * frame that fails the address filter to the promiscuous channel.
+   * Those arrive with EMAC_DESC_RX_NOMATCH set, which rm57emac_receive()
+   * deliberately does not treat as an error.
+   */
 
   putreg32(EMAC_RXMBPENABLE_RXBROADEN |
            EMAC_RXMBPENABLE_RXBROADCH(0) |
+#ifdef CONFIG_RM57_EMAC_PROMISC
+           EMAC_RXMBPENABLE_RXCAFEN |
+           EMAC_RXMBPENABLE_RXPROMCH(0) |
+#endif
 #ifdef CONFIG_NET_MCASTGROUP
            EMAC_RXMBPENABLE_RXMULTEN |
 #endif
@@ -1604,6 +1994,8 @@ static int rm57emac_ifup(FAR struct net_driver_s *dev)
       nerr("ERROR: rm57_mdio_initialize failed: %d\n", ret);
       return ret;
     }
+
+  rm57emac_regdump();
 
   ret = rm57emac_configure(priv);
   if (ret < 0)

@@ -129,6 +129,25 @@
 #  define BOARD_VCLK3_DIV           1    /* VCLK3R divide-by-2: HCLK/2=75MHz */
 #  define BOARD_VCLK3_FREQUENCY     75000000
 
+/* PHY reference clock, supplied by the MCU on the ECLK1 terminal.
+ *
+ * This board has no crystal or oscillator of its own for the PHY: per
+ * the docs/sprr397.pdf schematic (sheet 12), the DP83630's XIN (pin 34)
+ * is driven by the ECLK1T net, which comes from MCU ball A12 (ECLK1)
+ * through the 56 ohm series resistor RP8A, while XOUT (pin 33) and
+ * CLK_OUT (pin 24) are left unconnected.  The board's only crystal is
+ * the MCU's 16MHz Y1.  So without the ECLK1 setup in
+ * rm57_clockconfig.c the PHY has no clock at all and is completely
+ * dead - it does not answer MDIO, and MDIO_ALIVE reads 0 with every
+ * other register looking perfectly configured.
+ *
+ * ECLK = VCLK / (ECPDIV + 1), so a divider of 3 off this board's 75MHz
+ * VCLK gives the 25 MHz the PHY needs in MII mode, exactly.
+ */
+
+#  define BOARD_ECLK1_DIV           3    /* VCLK/3: 75MHz/3=25MHz */
+#  define BOARD_ECLK1_FREQUENCY     25000000
+
 #endif /* CONFIG_RM57_EMAC */
 
 /* PIN Multiplexor Initializer **********************************************/
@@ -187,76 +206,69 @@
 #  define BOARD_PINMUX_DCAN4
 #endif
 
-/* EMAC/MDIO.  Every MII/RMII data and clock signal on RM57L843 (except
- * MDIO_CLK, an unshared output) is available on two alternate balls; the
- * function-select entry (PINMUX_<ball>_<signal>_PIN, applied to PINMMR0-
- * 36) switches *that ball* to the signal, while a separate input-select
- * entry (PINMUX_SIG_<signal>_<ball>_PIN, applied to PINMMR87-91) tells
- * the peripheral which of its two possible balls to actually listen to
- * for signals that are inputs to the MCU.  Both must be set together for
- * every input signal used below.
+/* EMAC/MDIO.
  *
- * Ball choices here (the lower-numbered PINMMR21-36 bank option in each
- * pair, e.g. K19 over T4 for RXCLK, D19 over U7 for TX_CLK, G3 over F4
- * for MDIO) are a reasonable default grouping but are NOT independently
- * confirmed against the LAUNCHXL2-RM57L schematic - verify against the
- * board schematic/silkscreen before relying on this in new hardware
- * bring-up (a wrong ball choice here reads as "no link" with no other
- * symptom, since the MAC/PHY register-level configuration would still
- * look correct).
+ * Most MII signals on RM57L843 exist on two balls: a dedicated one that
+ * carries nothing else, and an alternate that is shared with N2HET1/
+ * MIBSPI.  For signals that are inputs to the MCU an input-select entry
+ * (PINMUX_SIG_<signal>_<ball>_PIN, PINMMR87-91) picks which of the two
+ * the peripheral actually listens to; for outputs a function-select
+ * entry (PINMUX_<ball>_<signal>_PIN, PINMMR0-36) switches that ball to
+ * the signal.  Balls that are dedicated need neither.
+ *
+ * This board wires Ethernet entirely to the dedicated set.  Read off the
+ * docs/sprr397.pdf schematic, sheet 3 (U1B, MCU pinout):
+ *
+ *   MDIO   F4    MDCLK  T9    MII_TXCLK U7   MII_RXCLK T4
+ *   MII_COL W4   MII_CRS V4   MII_RX_DV U6   MII_RX_ER U5
+ *   MII_RXD[0..3] U4 T3 U3 V3
+ *   MII_TXD[0..3] U8 R1 T2 G4   MII_TXEN E4
+ *
+ * The shared alternates (G3 for MDIO, V5 for MDCLK, K19/B11/N19/P1/A14/
+ * G19/H18/F3/B4/D19/E18/R2/J19/J18/H19 for the data path) are drawn on
+ * sheet 3 too, but their nets run to the BoosterPack headers on sheets
+ * 7/8/14 - not to the PHY.
+ *
+ * That leaves almost nothing to program: every PINMMR byte resets to
+ * 01h, which already selects exactly the dedicated balls this board
+ * uses.  An earlier version of this table selected the *alternate* ball
+ * (02h) for every MII input, which pointed the MAC's receive path at
+ * BoosterPack pins and silently broke RX.
+ *
+ * The one entry that is genuinely required is the MII/RMII selector:
+ * PINMMR160[24] resets to 1 = RMII (SPNU562A Section 6.5.3), and this
+ * board is hard-wired for MII - the DP83630's MII_MODE strap (RX_DV) is
+ * pulled low by RP11C on sheet 12, and there is no jumper to change it.
+ *
+ * The explicit SIG_* input-selects below are redundant with the reset
+ * value but are kept so this table documents the ball choice rather than
+ * relying on a silent default.
  */
 
 #ifdef CONFIG_RM57_EMAC
-#  define BOARD_PINMUX_EMAC_MDIO \
-  PINMUX_V5_MDCLK_PIN, \
-  PINMUX_G3_MDIO_PIN, \
-  PINMUX_SIG_MDIO_G3_PIN,
-
 #  ifdef CONFIG_RM57_EMAC_RMII
+     /* Not wired on this board: sheet 12 connects the full MII signal
+      * set and straps the PHY for MII.  Kept only so the Kconfig choice
+      * still builds; it selects RMII in the IOMM and nothing else.
+      */
+
 #    define BOARD_PINMUX_EMAC \
-  BOARD_PINMUX_EMAC_MDIO \
-  PINMUX_K19_MII_RXCLK_PIN, /* RMII_50MHZ_CLK reference input */ \
-  PINMUX_SIG_MII_RXCLK_K19_PIN, \
-  PINMUX_J19_RMII_TXD_1_PIN, \
-  PINMUX_J18_RMII_TXD_0_PIN, \
-  PINMUX_H19_RMII_TXEN_PIN, \
-  PINMUX_B4_RMII_CRS_DV_PIN, \
-  PINMUX_SIG_MII_CRS_B4_PIN, \
-  PINMUX_A14_RMII_RXD_1_PIN, \
-  PINMUX_SIG_MII_RXD_1_A14_PIN, \
-  PINMUX_P1_RMII_RXD_0_PIN, \
-  PINMUX_SIG_MII_RXD_0_P1_PIN, \
-  PINMUX_N19_RMII_RX_ER_PIN, \
-  PINMUX_SIG_MII_RX_ER_N19_PIN, \
   PINMUX_ETHERNET_RMII_PIN,
 #  else
 #    define BOARD_PINMUX_EMAC \
-  BOARD_PINMUX_EMAC_MDIO \
-  PINMUX_D19_MII_TX_CLK_PIN, \
-  PINMUX_SIG_MII_TX_CLK_D19_PIN, \
-  PINMUX_E18_MII_TXD_3_PIN, \
-  PINMUX_R2_MII_TXD_2_PIN, \
-  PINMUX_J19_MII_TXD_1_PIN, \
-  PINMUX_J18_MII_TXD_0_PIN, \
-  PINMUX_H19_MII_TXEN_PIN, \
-  PINMUX_F3_MII_COL_PIN, \
-  PINMUX_SIG_MII_COL_F3_PIN, \
-  PINMUX_B4_MII_CRS_PIN, \
-  PINMUX_SIG_MII_CRS_B4_PIN, \
-  PINMUX_K19_MII_RXCLK_PIN, \
-  PINMUX_SIG_MII_RXCLK_K19_PIN, \
-  PINMUX_H18_MII_RXD_3_PIN, \
-  PINMUX_SIG_MII_RXD_3_H18_PIN, \
-  PINMUX_G19_MII_RXD_2_PIN, \
-  PINMUX_SIG_MII_RXD_2_G19_PIN, \
-  PINMUX_A14_MII_RXD_1_PIN, \
-  PINMUX_SIG_MII_RXD_1_A14_PIN, \
-  PINMUX_P1_MII_RXD_0_PIN, \
-  PINMUX_SIG_MII_RXD_0_P1_PIN, \
-  PINMUX_B11_MII_RX_DV_PIN, \
-  PINMUX_SIG_MII_RX_DV_B11_PIN, \
-  PINMUX_N19_MII_RX_ER_PIN, \
-  PINMUX_SIG_MII_RX_ER_N19_PIN, \
+  PINMUX_SIG_MDIO_F4_PIN, \
+  PINMUX_SIG_MII_TX_CLK_U7_PIN, \
+  PINMUX_SIG_MII_COL_W4_PIN, \
+  PINMUX_SIG_MII_CRS_V4_PIN, \
+  PINMUX_SIG_MII_RXCLK_T4_PIN, \
+  PINMUX_SIG_MII_RXD_3_V3_PIN, \
+  PINMUX_SIG_MII_RXD_2_U3_PIN, \
+  PINMUX_SIG_MII_RXD_1_T3_PIN, \
+  PINMUX_SIG_MII_RXD_0_U4_PIN, \
+  PINMUX_SIG_MII_RX_DV_U6_PIN, \
+  PINMUX_SIG_MII_RX_ER_U5_PIN, \
+  PINMUX_T4_MII_RXCLK_PIN, \
+  PINMUX_U7_MII_TX_CLK_PIN, \
   PINMUX_ETHERNET_MII_PIN,
 #  endif
 #else

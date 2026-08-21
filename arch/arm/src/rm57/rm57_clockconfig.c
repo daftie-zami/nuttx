@@ -253,6 +253,30 @@ static void rm57_map_clocks(void)
   regval &= ~SYS_PLLCTL1_PLLDIV_MASK;
   regval |= SYS_PLLCTL1_PLLDIV(BOARD_PLL_R - 1);
   putreg32(regval, RM57_SYS2_PLLCTL3);
+
+#ifdef BOARD_ECLK1_DIV
+  /* Drive the board's PHY reference clock out of the ECLK1 terminal.
+   *
+   * This has to come last: ECLK is divided down from VCLK, which only
+   * reaches its final frequency with the PLL output divider written
+   * just above.  ECPSSEL is left clear to select VCLK (rather than
+   * OSCIN, which on this board cannot produce 25MHz from its 16MHz
+   * crystal by any integer divisor).
+   *
+   * ECPCOS matters more than it looks: with it clear the ECLK output
+   * is gated off whenever the device enters JTAG suspend, so a PHY fed
+   * from this pin would lose its clock at every debugger breakpoint.
+   */
+
+  putreg32(SYS_ECPCNTL_ECPCOS | SYS_ECPCNTL_ECPDIV(BOARD_ECLK1_DIV - 1),
+           RM57_SYS_ECPCNTL);
+
+  /* Switch the terminal out of its GIO reset default and into
+   * functional (clock output) mode, now that the divider is set.
+   */
+
+  putreg32(SYS_SYSPC1_ECPCLKFUN, RM57_SYS_SYSPC1);
+#endif
 }
 
 /****************************************************************************

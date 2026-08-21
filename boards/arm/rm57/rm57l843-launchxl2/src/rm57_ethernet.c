@@ -29,24 +29,29 @@
 #include <sys/types.h>
 #include <stdint.h>
 
+#include <nuttx/arch.h>
+
 #include "arm_internal.h"
 #include "hardware/rm57l843_memorymap.h"
 #include "rm57_ethernet.h"
+#include "rm57_gio.h"
 
 #include "rm57l843-launchxl2.h"
 
-/* Only meaningful under CONFIG_NETDEV_LATEINIT: otherwise
- * arm_netinitialize() (rm57_netinitialize.c) already registers the EMAC
- * with a fixed placeholder MAC address before rm57_bringup() ever runs,
- * and calling rm57_ethinitialize() a second time here would attempt to
- * register the same netdev twice.
- */
-
-#if defined(CONFIG_RM57_EMAC) && defined(CONFIG_NETDEV_LATEINIT)
+#ifdef CONFIG_RM57_EMAC
 
 /****************************************************************************
  * Pre-processor Definitions
  ****************************************************************************/
+
+/* PHY reset timing.  The low pulse only has to be about a microsecond,
+ * but up_mdelay(1) is the smallest thing worth trusting here and costs
+ * nothing at boot.  The DP83630 needs a few milliseconds after reset is
+ * released before it answers MDIO, so allow a generous margin.
+ */
+
+#define PHY_RESET_ASSERT_MS   1
+#define PHY_RESET_SETTLE_MS   10
 
 /* Die ID registers (SPNU562A system module) - no CONFIG_RM57_EMAC-
  * independent consumer exists yet in the shared hardware/rm57_sys.h
@@ -62,11 +67,56 @@
  ****************************************************************************/
 
 /****************************************************************************
+ * Name: rm57_phy_powerup
+ *
+ * Description:
+ *   Bring the board's DP83630 out of power-down and out of reset.  Both
+ *   of its control inputs default to the "off" state (see the
+ *   GIO_PHY_PWRDOWN/GIO_PHY_RESET comments in rm57l843-launchxl2.h), so
+ *   without this the PHY never runs: it does not answer MDIO, the RJ45
+ *   link LED is only lit by leakage through its pull-up, and the EMAC
+ *   driver reports MDIO_ALIVE=0 with every register otherwise correct.
+ *
+ *   The PHY's XIN reference clock comes from the MCU's ECLK1 terminal
+ *   and is already running by the time this is called, from
+ *   rm57_clockconfig() at boot (BOARD_ECLK1_DIV in board.h).  That
+ *   ordering matters: the DP83630 latches its strap pins - including
+ *   the PHY address - when reset is released, and it needs its clock to
+ *   do so.
+ *
+ ****************************************************************************/
+
+void rm57_phy_powerup(void)
+{
+  /* Leave power-down: the pinset drives GIOA[3] high, which has to
+   * overcome the board's 2.2k pulldown on that net.
+   */
+
+  rm57_configgio(GIO_PHY_PWRDOWN);
+
+  /* Assert reset (the pinset drives GIOA[4] low), hold, then release */
+
+  rm57_configgio(GIO_PHY_RESET);
+  up_mdelay(PHY_RESET_ASSERT_MS);
+
+  rm57_giowrite(GIO_PHY_RESET, true);
+  up_mdelay(PHY_RESET_SETTLE_MS);
+}
+
+#ifdef CONFIG_NETDEV_LATEINIT
+
+/****************************************************************************
  * Name: rm57_eth_setup
  *
  * Description:
  *   Derive a locally-administered MAC address from the device's unique
  *   die ID and register the EMAC driver.
+ *
+ *   Only built under CONFIG_NETDEV_LATEINIT: otherwise
+ *   arm_netinitialize() (rm57_netinitialize.c) already registers the
+ *   EMAC with a fixed placeholder MAC address before rm57_bringup()
+ *   ever runs, and calling rm57_ethinitialize() a second time here
+ *   would attempt to register the same netdev twice.
  *
  ****************************************************************************/
 
@@ -93,4 +143,6 @@ int rm57_eth_setup(void)
   return rm57_ethinitialize(0, mac);
 }
 
-#endif /* CONFIG_RM57_EMAC && CONFIG_NETDEV_LATEINIT */
+#endif /* CONFIG_NETDEV_LATEINIT */
+
+#endif /* CONFIG_RM57_EMAC */
