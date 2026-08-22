@@ -192,10 +192,16 @@
 #  define BOARD_PINMUX_SCI4
 #endif
 
-/* DCAN1-DCAN3 have dedicated balls (with on-board transceivers for DCAN1
- * and DCAN2 on the LaunchPad).  DCAN4 shares ball F2 (TX) with GIOB[2]
- * and ball W10 (RX) with GIOB[3]; claim them for CAN whenever DCAN4 is
- * enabled.
+/* DCAN1-DCAN3 have dedicated balls and need no entry here: DCAN1 on
+ * A10 (TX) / B10 (RX), DCAN2 on H2 / H1, DCAN3 on M18 / M19.  DCAN4
+ * shares ball F2 (TX) with GIOB[2] and ball W10 (RX) with GIOB[3];
+ * claim them for CAN whenever DCAN4 is enabled.
+ *
+ * The LaunchPad carries no CAN transceiver for any of the four modules -
+ * the balls run straight to the BoosterPack headers at CMOS levels.  A
+ * real bus therefore needs an external transceiver; without one the only
+ * usable modes are the DCAN loopback/silent test modes, which still drive
+ * the TX ball so the frames can be observed with a logic analyzer.
  */
 
 #ifdef CONFIG_RM57_DCAN4

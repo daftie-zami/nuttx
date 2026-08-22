@@ -40,6 +40,7 @@
 #include <sys/types.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <inttypes.h>
 #include <string.h>
 #include <assert.h>
 #include <errno.h>
@@ -80,6 +81,7 @@ static void rm57can_cd_rxframe(void *ctx, uint32_t arb, uint32_t mctl,
                                uint32_t da, uint32_t db);
 static void rm57can_cd_txempty(void *ctx);
 static void rm57can_cd_errevent(void *ctx, uint32_t es, uint32_t errc);
+static void rm57can_cd_rxoverflow(void *ctx);
 
 /****************************************************************************
  * Private Data
@@ -103,8 +105,9 @@ static const struct rm57can_cbs_s g_rm57can_cd_cbs =
 {
   .rxframe  = rm57can_cd_rxframe,
   .txdone   = NULL,                     /* can_txdone runs in co_send */
-  .txempty  = rm57can_cd_txempty,
-  .errevent = rm57can_cd_errevent,
+  .txempty    = rm57can_cd_txempty,
+  .errevent   = rm57can_cd_errevent,
+  .rxoverflow = rm57can_cd_rxoverflow,
 };
 
 /* One character device per DCAN instance (only those configured as
@@ -113,9 +116,73 @@ static const struct rm57can_cbs_s g_rm57can_cd_cbs =
 
 static struct can_dev_s g_rm57can_dev[RM57_NCAN];
 
+/* Set when can_receive() has refused a frame because the upper-half FIFO
+ * was full.  The overflow is reported once there is room again: emitting
+ * the report at the moment of failure is pointless, since the report
+ * itself would be the next thing refused.
+ */
+
+static bool g_rxovf_pending[RM57_NCAN];
+
 /****************************************************************************
  * Private Functions
  ****************************************************************************/
+
+/****************************************************************************
+ * Name: rm57can_cd_ovfframe
+ *
+ * Description:
+ *   Report a dropped receive frame as a CAN error frame.  The two
+ *   sources are kept distinct because they point at different fixes:
+ *   a controller overflow (MCTL.MsgLst) means the interrupt did not run
+ *   in time, while a queue overflow means the application did not read
+ *   in time.
+ *
+ ****************************************************************************/
+
+static void rm57can_cd_ovfframe(struct can_dev_s *dev, bool controller)
+{
+#ifdef CONFIG_CAN_ERRORS
+  struct can_hdr_s hdr;
+  uint8_t data[CAN_ERROR_DLC];
+
+  memset(&hdr, 0, sizeof(hdr));
+  memset(data, 0, sizeof(data));
+
+  if (controller)
+    {
+      hdr.ch_id = CAN_ERROR_CONTROLLER;
+      data[1]   = CAN_ERROR1_RXOVERFLOW;
+    }
+  else
+    {
+      hdr.ch_id = CAN_ERROR_INTERNAL;
+      data[5]   = CAN_ERROR5_RXOVERFLOW;
+    }
+
+  hdr.ch_dlc   = CAN_ERROR_DLC;
+  hdr.ch_error = true;
+
+  can_receive(dev, &hdr, data);
+#else
+  UNUSED(dev);
+  UNUSED(controller);
+#endif
+}
+
+/****************************************************************************
+ * Name: rm57can_cd_rxoverflow
+ *
+ * Description:
+ *   Core callback (interrupt context): the controller overwrote a frame
+ *   in its message object before the driver read it.
+ *
+ ****************************************************************************/
+
+static void rm57can_cd_rxoverflow(void *ctx)
+{
+  rm57can_cd_ovfframe((struct can_dev_s *)ctx, true);
+}
 
 /****************************************************************************
  * Name: rm57can_cd_rxframe
@@ -172,7 +239,22 @@ static void rm57can_cd_rxframe(void *ctx, uint32_t arb, uint32_t mctl,
       data[i + 4] = (uint8_t)(db >> (8 * i));
     }
 
-  can_receive(dev, &hdr, data);
+  /* A refused frame is already gone: the message object was released by
+   * the transfer that read it, so there is nothing left to retry.  All
+   * that can be done is to make the loss visible.
+   */
+
+  if (can_receive(dev, &hdr, data) < 0)
+    {
+      g_rxovf_pending[dev - g_rm57can_dev] = true;
+      canerr("ERROR: DCAN RX queue full, frame 0x%" PRIx32 " dropped\n",
+             (uint32_t)hdr.ch_id);
+    }
+  else if (g_rxovf_pending[dev - g_rm57can_dev])
+    {
+      g_rxovf_pending[dev - g_rm57can_dev] = false;
+      rm57can_cd_ovfframe(dev, false);
+    }
 }
 
 /****************************************************************************
@@ -314,6 +396,7 @@ static void rm57can_co_reset(struct can_dev_s *dev)
 
 static int rm57can_co_setup(struct can_dev_s *dev)
 {
+  g_rxovf_pending[dev - g_rm57can_dev] = false;
   return rm57can_setup((struct rm57can_s *)dev->cd_priv);
 }
 

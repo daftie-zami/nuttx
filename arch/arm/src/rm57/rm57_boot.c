@@ -180,6 +180,15 @@ void arm_boot(void)
 
   rm57_board_initialize();
 
+#ifdef CONFIG_ARCH_PERF_EVENTS
+  /* Start the Cortex-R5 PMU cycle counter, the only clock on this part
+   * with a resolution below the 10 ms system tick.  It counts GCLK (the
+   * CPU clock, BOARD_PLL_FREQUENCY), not HCLK.
+   */
+
+  up_perf_init((void *)BOARD_PLL_FREQUENCY);
+#endif
+
   /* Bring up the console SCI (RX/TX pin function, baud/format/GCR1).
    * This must run before nx_start() - without it the SCI module is left
    * in its power-on-reset state (module held in reset, RX/TX pin

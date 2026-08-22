@@ -93,10 +93,13 @@ Three receive paths are available per instance:
 The CAN clock (VCLKA1) is mapped to VCLK (75 MHz with the default board
 clocking); the bit-timing search targets a 75% sample point, matching
 TI's HALCoGen defaults (500 kbit/s -> BRP=10, TSEG1=10, TSEG2=4).
-DCAN1-DCAN3 use dedicated balls; DCAN4 is pin-multiplexed with GIOB[2]
-and GIOB[3] and the board claims those balls when ``RM57_DCAN4`` is
-enabled.  On the LAUNCHXL2-RM57L board, DCAN1 and DCAN2 have on-board
-transceivers.  The board configurations ``can`` (character driver,
+DCAN1-DCAN3 use dedicated balls (A10/B10, H2/H1, M18/M19); DCAN4 is
+pin-multiplexed with GIOB[2] and GIOB[3] (F2/W10) and the board claims
+those balls when ``RM57_DCAN4`` is enabled.  The LAUNCHXL2-RM57L has no
+CAN transceiver on board - every DCAN ball runs to a BoosterPack header
+at CMOS levels, so a real bus needs an external transceiver, while the
+loopback test mode still drives the TX ball for logic-analyzer capture.
+The board configurations ``can`` (character driver,
 loopback self-test), ``cansock`` (SocketCAN with candump/cansend) and
 ``candma`` (IF3 DMA receive path) are provided.
 

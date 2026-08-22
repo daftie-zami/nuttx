@@ -118,6 +118,14 @@ struct rm57can_cbs_s
    */
 
   void (*errevent)(void *ctx, uint32_t es, uint32_t errc);
+
+  /* A received frame was overwritten in its message object before the
+   * driver could read it (MCTL.MsgLst): the controller's own receive
+   * buffer overflowed.  Distinct from the frontend's software queue
+   * overflowing, which the frontend reports itself.
+   */
+
+  void (*rxoverflow)(void *ctx);
 };
 
 /* One DCAN instance.  Frontends treat this as opaque except through the

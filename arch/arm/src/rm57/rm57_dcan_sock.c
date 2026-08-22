@@ -104,6 +104,7 @@ static void rm57can_sk_rxframe(void *ctx, uint32_t arb, uint32_t mctl,
                                uint32_t da, uint32_t db);
 static void rm57can_sk_txdone(void *ctx);
 static void rm57can_sk_errevent(void *ctx, uint32_t es, uint32_t errc);
+static void rm57can_sk_rxoverflow(void *ctx);
 
 /****************************************************************************
  * Private Data
@@ -113,8 +114,9 @@ static const struct rm57can_cbs_s g_rm57can_sk_cbs =
 {
   .rxframe  = rm57can_sk_rxframe,
   .txdone   = rm57can_sk_txdone,
-  .txempty  = NULL,
-  .errevent = rm57can_sk_errevent,
+  .txempty    = NULL,
+  .errevent   = rm57can_sk_errevent,
+  .rxoverflow = rm57can_sk_rxoverflow,
 };
 
 static struct rm57can_sock_s g_rm57can_sock[RM57_NCAN];
@@ -304,6 +306,46 @@ static void rm57can_sk_errevent(void *ctx, uint32_t es, uint32_t errc)
 
   sock->dev.d_buf = (uint8_t *)&sock->txframe;
 #endif /* CONFIG_NET_CAN_ERRORS */
+}
+
+/****************************************************************************
+ * Name: rm57can_sk_rxoverflow
+ *
+ * Description:
+ *   Core callback (interrupt context): the controller overwrote a frame
+ *   in its message object before the driver read it.  Reported as a
+ *   controller receive overflow so it stays distinguishable from a
+ *   frame the network stack itself could not take.
+ *
+ ****************************************************************************/
+
+static void rm57can_sk_rxoverflow(void *ctx)
+{
+#ifdef CONFIG_NET_CAN_ERRORS
+  struct rm57can_sock_s *sock = (struct rm57can_sock_s *)ctx;
+  struct can_frame *frame = &sock->errframe;
+
+  if (!sock->bifup)
+    {
+      return;
+    }
+
+  memset(frame, 0, sizeof(*frame));
+
+  frame->can_id  = CAN_ERR_CRTL | CAN_ERR_FLAG;
+  frame->can_dlc = CAN_ERR_DLC;
+  frame->data[1] = CAN_ERR_CRTL_RX_OVERFLOW;
+
+  sock->dev.d_len = sizeof(struct can_frame);
+  sock->dev.d_buf = (uint8_t *)frame;
+
+  NETDEV_RXERRORS(&sock->dev);
+  can_input(&sock->dev);
+
+  sock->dev.d_buf = (uint8_t *)&sock->txframe;
+#else
+  UNUSED(ctx);
+#endif
 }
 
 /****************************************************************************

@@ -59,6 +59,7 @@
 #include <sys/types.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <inttypes.h>
 #include <string.h>
 #include <assert.h>
 #include <errno.h>
@@ -98,6 +99,19 @@
  */
 
 #define RM57_DCAN_SAMPLEPOINT 750
+
+/* The configured SECDED mode, as a CTL.PMD field value.  Every write of
+ * the whole CTL register has to carry this: the field is 4 bits wide and
+ * "disabled" is the single value 0x5, so leaving it out of a write does
+ * not mean "unchanged" or even "off" - it writes 0x0, which the hardware
+ * reads as yet another "enabled" encoding.
+ */
+
+#ifdef CONFIG_RM57_DCAN_SECDED
+#  define RM57_DCAN_CTL_PMD   DCAN_CTL_PMD_ENABLE
+#else
+#  define RM57_DCAN_CTL_PMD   DCAN_CTL_PMD_DISABLE
+#endif
 
 /* Defensive bound for the ISR drain loops */
 
@@ -585,6 +599,41 @@ static void rm57can_remove_catchall(struct rm57can_s *priv)
  *
  ****************************************************************************/
 
+static void rm57can_note_rxlost(struct rm57can_s *priv, int mbox,
+                                uint32_t mctl)
+{
+  priv->rxlost++;
+
+  /* MsgLst is sticky: TRM SPNU562A section 26.17 defines it as "no
+   * message was lost since the last time when this bit was reset by the
+   * CPU".  Left alone it stays set forever and every later read of the
+   * same object counts another phantom overflow, so write the control
+   * section back with it cleared.  NewDat and IntPnd have to be masked
+   * out of the write as well: the IF register image still holds the
+   * values from before the read transfer cleared them in the message
+   * RAM, and writing them back would resurrect the frame we just took.
+   *
+   * mbox 0 means the caller does not know which object this came from -
+   * the IF3 auto-copy paths only see the register image, never the
+   * object number - so there the overflow is counted and reported but
+   * cannot be cleared.
+   */
+
+  if (mbox > 0)
+    {
+      putreg32(mctl & ~(DCAN_IFMCTL_MSGLST | DCAN_IFMCTL_INTPND |
+                        DCAN_IFMCTL_NEWDAT),
+               priv->base + RM57_DCAN_IFMCTL_OFFSET(RM57_DCAN_IF2));
+      rm57can_if_exec(priv, RM57_DCAN_IF2,
+                      DCAN_IFCMD_WR | DCAN_IFCMD_CONTROL, mbox);
+    }
+
+  if (priv->cbs->rxoverflow != NULL)
+    {
+      priv->cbs->rxoverflow(priv->ctx);
+    }
+}
+
 static void rm57can_rxframe_if2(struct rm57can_s *priv, int mbox)
 {
   uint32_t base = priv->base;
@@ -605,7 +654,7 @@ static void rm57can_rxframe_if2(struct rm57can_s *priv, int mbox)
 
   if ((mctl & DCAN_IFMCTL_MSGLST) != 0)
     {
-      priv->rxlost++;
+      rm57can_note_rxlost(priv, mbox, mctl);
     }
 
   if (priv->cbs->rxframe != NULL)
@@ -743,6 +792,17 @@ static int rm57can_isr1(int irq, void *context, void *arg)
           break;
         }
 
+      /* Int1ID is an 8-bit field but only 1..64 are message objects.
+       * Anything else would index the message RAM out of bounds.
+       */
+
+      if (intid > RM57_DCAN_NMSGOBJ)
+        {
+          canerr("ERROR: DCAN%d bogus Int1ID %" PRIu32 "\n",
+                 priv->port, intid);
+          break;
+        }
+
       rm57can_rxframe_if2(priv, (int)intid);
     }
 
@@ -785,7 +845,7 @@ static int rm57can_isrif3(int irq, void *context, void *arg)
 
       if ((mctl & DCAN_IFMCTL_MSGLST) != 0)
         {
-          priv->rxlost++;
+          rm57can_note_rxlost(priv, 0, mctl);
         }
 
       if (priv->cbs->rxframe != NULL)
@@ -819,7 +879,7 @@ static void rm57can_if3_read(struct rm57can_s *priv)
 
   if ((mctl & DCAN_IFMCTL_MSGLST) != 0)
     {
-      priv->rxlost++;
+      rm57can_note_rxlost(priv, 0, mctl);
     }
 
   if (priv->cbs->rxframe != NULL)
@@ -854,7 +914,7 @@ static void rm57can_if3dma_callback(DMA_HANDLE handle, uint8_t status,
 
   if ((mctl & DCAN_IFMCTL_MSGLST) != 0)
     {
-      priv->rxlost++;
+      rm57can_note_rxlost(priv, 0, mctl);
     }
 
   priv->if3stuck = false;
@@ -1207,30 +1267,44 @@ int rm57can_setup(struct rm57can_s *priv)
 
   nxmutex_lock(&priv->iflock);
 
-  /* ECC-initialize the message RAM, then software-reset the module */
+  /* Software-reset the module first: SWR restores CTL to its reset
+   * value, which would undo the PMD setting that has to be in place
+   * before the message RAM is initialized.
+   */
 
-  rm57can_meminit(priv);
-
-  putreg32(DCAN_CTL_INIT, base + RM57_DCAN_CTL_OFFSET);
-  putreg32(DCAN_CTL_INIT | DCAN_CTL_SWR, base + RM57_DCAN_CTL_OFFSET);
+  putreg32(DCAN_CTL_INIT | RM57_DCAN_CTL_PMD, base + RM57_DCAN_CTL_OFFSET);
+  putreg32(DCAN_CTL_INIT | RM57_DCAN_CTL_PMD | DCAN_CTL_SWR,
+           base + RM57_DCAN_CTL_OFFSET);
   while ((getreg32(base + RM57_DCAN_CTL_OFFSET) & DCAN_CTL_SWR) != 0)
     {
     }
 
-  /* Enter configuration mode.  PMD: 0x5 disables SECDED, any other
-   * value enables it.
+  /* Select the SECDED mode *before* the message RAM is auto-initialized.
+   * The checkbits are only generated during auto-initialization if PMD
+   * is already set (TRM SPNU562A section 26.15: "During RAM
+   * initialization, no ECC check will be done, but if the PMD bit is
+   * set, the ECC bits will be generated", and section 2.2.4.2: "The ECC
+   * or parity should be enabled on the RAMs before hardware
+   * auto-initialization starts").  Initializing with SECDED still off -
+   * PMD reads 0x5, "disabled", out of reset - leaves the checkbit RAM
+   * holding garbage, so the first read-modify-write of any message
+   * object raises a double-bit error: ES.PER, reported to the
+   * application as a spurious CAN_ERROR_INTERNAL, and a message object
+   * whose MsgVal the message handler clears out from under us.
+   *
+   * PMD: 0x5 disables SECDED, any other value enables it.
    */
 
-#ifdef CONFIG_RM57_DCAN_SECDED
-  ctl = DCAN_CTL_INIT | DCAN_CTL_CCE | DCAN_CTL_PMD_ENABLE;
-#else
-  ctl = DCAN_CTL_INIT | DCAN_CTL_CCE | DCAN_CTL_PMD_DISABLE;
-#endif
+  putreg32(DCAN_CTL_INIT | RM57_DCAN_CTL_PMD, base + RM57_DCAN_CTL_OFFSET);
+
+  rm57can_meminit(priv);
+
+  /* Enter configuration mode */
+
+  ctl = DCAN_CTL_INIT | DCAN_CTL_CCE | RM57_DCAN_CTL_PMD;
   putreg32(ctl, base + RM57_DCAN_CTL_OFFSET);
 
-  /* Clear stale status (read clears) and program the bit timing */
-
-  getreg32(base + RM57_DCAN_ES_OFFSET);
+  /* Program the bit timing */
 
   putreg32(DCAN_BTR_BRP(priv->timing.brp - 1) |
            DCAN_BTR_BRPE((priv->timing.brp - 1) >> 6) |
@@ -1345,7 +1419,8 @@ int rm57can_setup(struct rm57can_s *priv)
         {
           up_disable_irq(priv->irq0);
           irq_detach(priv->irq0);
-          putreg32(DCAN_CTL_INIT, base + RM57_DCAN_CTL_OFFSET);
+          putreg32(DCAN_CTL_INIT | RM57_DCAN_CTL_PMD,
+                   base + RM57_DCAN_CTL_OFFSET);
           nxmutex_unlock(&priv->iflock);
           return ret;
         }
@@ -1367,13 +1442,7 @@ int rm57can_setup(struct rm57can_s *priv)
    * request when an IF3 RX path is active.
    */
 
-  ctl = DCAN_CTL_IE0 | DCAN_CTL_IE1 | DCAN_CTL_EIE;
-
-#ifdef CONFIG_RM57_DCAN_SECDED
-  ctl |= DCAN_CTL_PMD_ENABLE;
-#else
-  ctl |= DCAN_CTL_PMD_DISABLE;
-#endif
+  ctl = DCAN_CTL_IE0 | DCAN_CTL_IE1 | DCAN_CTL_EIE | RM57_DCAN_CTL_PMD;
 
 #if defined(CONFIG_CAN_ERRORS) || defined(CONFIG_NET_CAN_ERRORS)
   ctl |= DCAN_CTL_SIE;
@@ -1398,6 +1467,19 @@ int rm57can_setup(struct rm57can_s *priv)
     {
       ctl |= DCAN_CTL_TEST;
     }
+
+  /* Discard everything latched while the mailboxes were being
+   * programmed, so that the first status interrupt reports what happens
+   * on the bus rather than the tail of our own setup.  Reading ES clears
+   * PER/RxOK/TxOK/WakeUpPnd; the single-bit error flag in ECC_CS is
+   * write-1-to-clear and PERR is read-only diagnostic state that only
+   * updates on the next error.  This has to be the last thing before
+   * interrupts are armed.
+   */
+
+  getreg32(base + RM57_DCAN_ES_OFFSET);
+  putreg32(getreg32(base + RM57_DCAN_ECCCS_OFFSET) | DCAN_ECCCS_SBERR,
+           base + RM57_DCAN_ECCCS_OFFSET);
 
   putreg32(ctl, base + RM57_DCAN_CTL_OFFSET);
 
@@ -1449,7 +1531,8 @@ void rm57can_shutdown(struct rm57can_s *priv)
 
   /* Stop all bus activity */
 
-  putreg32(DCAN_CTL_INIT, priv->base + RM57_DCAN_CTL_OFFSET);
+  putreg32(DCAN_CTL_INIT | RM57_DCAN_CTL_PMD,
+           priv->base + RM57_DCAN_CTL_OFFSET);
 
   priv->setup       = false;
   priv->tx_used     = 0;
@@ -1734,7 +1817,13 @@ int rm57can_busoff_recovery(struct rm57can_s *priv)
    * clears when the sequence completes - tracked by the status ISR.
    */
 
+  /* iflock also serializes the read-modify-writes of CTL that
+   * rm57can_set_nart()/set_abom()/set_connmodes() perform.
+   */
+
+  nxmutex_lock(&priv->iflock);
   modifyreg32(priv->base + RM57_DCAN_CTL_OFFSET, DCAN_CTL_INIT, 0);
+  nxmutex_unlock(&priv->iflock);
   return OK;
 }
 

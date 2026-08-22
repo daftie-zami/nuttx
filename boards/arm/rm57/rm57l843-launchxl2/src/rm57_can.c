@@ -26,9 +26,10 @@
  * a SocketCAN network interface (canN, numbered by netdev registration
  * order).
  *
- * DCAN1 and DCAN2 are wired to on-board SN65HVD82 transceivers on this
- * LaunchPad (headers J5/J4); DCAN3 and DCAN4 are on BoosterPack pins
- * and need external transceivers.
+ * This LaunchPad has no CAN transceiver on board: all four modules come
+ * out on the BoosterPack headers at CMOS levels (DCAN1 A10/B10, DCAN2
+ * H2/H1, DCAN3 M18/M19, DCAN4 F2/W10) and need an external transceiver
+ * to reach a real bus.
  */
 
 /****************************************************************************
