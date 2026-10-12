@@ -47,6 +47,14 @@ DCAN           All four DCAN (Bosch D_CAN, CAN 2.0A/B) controllers
                (``canN``); both frontends can coexist in one image on
                different instances. See `DCAN`_ below.
 GIO            General purpose I/O, used for LEDs
+ADC            Both MibADC modules (``CONFIG_RM57_ADC1`` /
+               ``CONFIG_RM57_ADC2``), 10- or 12-bit. Each of a module's
+               three conversion groups is registered as its own
+               ``/dev/adcN``. Calibration, self test, magnitude compare
+               interrupts, hardware triggers, DMA result transfer and the
+               enhanced channel selection mode are all supported, along with
+               the three on-die temperature sensors
+               (``CONFIG_RM57_ADC_TEMPSENSOR``). See `ADC (MibADC)`_ below.
 EMAC           10/100 Ethernet MAC + EMAC Control module + MDIO
                (``CONFIG_RM57_EMAC``). Single netdev interface (``eth0``),
                MII or RMII (``RM57_EMAC_MII`` / ``RM57_EMAC_RMII``). See
@@ -55,7 +63,7 @@ EMAC           10/100 Ethernet MAC + EMAC Control module + MDIO
 
 .. todo::
 
-   Many peripherals available on the RM57L843 (N2HET, MibSPI, ADC,
+   Many peripherals available on the RM57L843 (N2HET, MibSPI, I2C,
    the ESM diagnostic module, PBIST/STC self-test, etc.) are not yet
    implemented. Contributions are welcome.
 
@@ -143,6 +151,198 @@ SCI3             30         31
 SCI2/LIN2        40         41
 SCI4             42         43
 ================ ========== ==========
+
+ADC (MibADC)
+============
+
+The RM57L843 has two MibADC modules. ADC1 serves 32 analog inputs and ADC2
+serves 25, of which 16 are the same balls ADC1 sees. Both are successive
+approximation converters that run at either 10- or 12-bit resolution, and
+both are enabled independently with ``CONFIG_RM57_ADC1`` and
+``CONFIG_RM57_ADC2``.
+
+Conversion groups
+-----------------
+
+Each module contains three independent conversion groups - the Event group,
+Group1 and Group2. A group owns its channel selection mask, trigger source,
+sampling window, slice of the results memory and VIM interrupt channel, so
+the driver registers each enabled group as a separate character device.
+Devices are numbered ``/dev/adc0`` upwards in the order the groups are
+enabled, ADC1 before ADC2 and Event before Group1 before Group2.
+
+A group is enabled with ``CONFIG_RM57_ADCn_EV``, ``..._G1`` or ``..._G2``,
+and configured with the options underneath it: ``..._CHANMASK`` selects the
+channels, ``..._ACQ`` the sampling window, ``..._BUFS`` its share of the
+results memory, ``..._THRESHOLD`` how many results accumulate before the
+group interrupts, and ``..._CONTINUOUS`` whether the channels are converted
+once per trigger or continuously.
+
+Results memory
+--------------
+
+Each module has a 64-word results RAM that its three groups divide between
+them. The hardware allocates it in *pairs* of buffers through a single
+register, so the split is computed for the whole module from every group's
+``..._BUFS`` value. The Event group and Group1 counts must therefore be even,
+and a module's three groups must not ask for more than 64 words in total;
+both rules are checked at compile time.
+
+The RAM is auto-initialized to zero at start-up through the system module's
+memory initialization controller, which is what makes it safe to switch on
+the parity checking enabled by default with ``CONFIG_RM57_ADC_PARITY``. A
+parity error is reported to the Error Signalling Module.
+
+Conversion clock
+----------------
+
+ADCLK is VCLK divided by a prescaler. Rather than expose the divider,
+``CONFIG_RM57_ADCn_CLOCK`` names the wanted frequency and the driver derives
+the prescaler from ``BOARD_VCLK_FREQUENCY``, rounding so the result never
+exceeds the request. SPNS215 specifies a ``tc(ADCLK)`` of at least 33ns, an
+ADCLK ceiling of 30MHz, which is asserted at compile time. The default of
+9.375MHz is VCLK/8 on a board running VCLK at 75MHz.
+
+Triggering
+----------
+
+Group1 and Group2 are software triggered by default: writing the channel
+selection starts a conversion. Setting ``CONFIG_RM57_ADCn_Gx_HWTRIG`` makes
+them wait for one of eight hardware sources instead, selected with
+``..._TRIGSRC`` - the ADxEVT pin, four N2HET1 outputs, an RTI compare match
+or two GIOB pins. The Event group has no such choice: it is always started
+by its trigger source, so only the source and its edge are configurable.
+
+When the ADxEVT pin is not used as a trigger it can serve as a general
+purpose I/O through the ``ANIOC_RM57_EVTPIN`` ioctl. Note that AD1EVT shares
+ball N19 with the Ethernet MII_RX_ER signal, so it is unavailable when
+``CONFIG_RM57_EMAC`` is enabled.
+
+Result transfer
+---------------
+
+By default a group's interrupt handler drains the results FIFO and hands
+each sample to the upper half. Selecting ``CONFIG_RM57_ADC1_Gx_DMA`` moves
+them with the DMA controller instead, into a two-half ring that lets the ADC
+fill one half while the other is delivered as a batch. ADC1 has dedicated
+DMA request lines; ADC2's are alternate functions shared with MibSPI1 and
+MibSPI3 and would need the system module's request source mux reprogrammed,
+so ADC2 has no DMA option.
+
+Calibration and diagnostics
+---------------------------
+
+With ``CONFIG_RM57_ADC_CALIBRATE`` (the default) the driver runs the offset
+error calibration when a module's first group is registered: four internal
+reference voltages are converted, and the deviation of their average from
+mid scale is loaded into the correction register that the hardware adds to
+every subsequent result. ``ANIOC_RM57_CALIBRATE`` repeats it on demand and
+``ANIOC_RM57_MIDPOINTCAL`` runs the differential variant, which cancels the
+mismatch of the internal bridge resistors.
+
+``ANIOC_RM57_SELFTEST`` drives each reference onto one input through an
+internal test resistor and classifies the channel as healthy, open, or
+shorted to ground or supply.
+
+``CONFIG_RM57_ADC_MAGCOMP`` builds support for the three hardware magnitude
+comparators of each module, which interrupt when a monitored channel crosses
+a threshold - either a fixed value or the latest result of a second channel.
+The generic ``ANIOC_WDOG_UPPER`` and ``ANIOC_WDOG_LOWER`` commands are backed
+by the first two of them.
+
+Channel order
+-------------
+
+Channels are normally converted in ascending channel number. ADC1 also
+supports a look-up table based order, built with
+``CONFIG_RM57_ADC_ENHANCED_CHSEL`` and loaded through
+``ANIOC_RM57_SET_CHNSEQ``, which converts an arbitrary user-defined sequence
+and can drive an external analog multiplexer alongside it. ADC2 does not
+implement this mode.
+
+On-chip temperature sensors
+---------------------------
+
+The device carries three on-die temperature sensors, each multiplexed onto one
+ADC channel: sensor 1 on ADC1 channel 31, sensors 2 and 3 on ADC2 channels 31
+and 30. They are enabled with ``CONFIG_RM57_ADC_TEMPSENSOR`` and selected
+individually with ``CONFIG_RM57_ADC_TEMP1`` to ``..._TEMP3``.
+
+Out of reset all three are powered down and their channels are wired to the
+external balls instead, so the driver has to release them and re-mux them
+through the IOMM. Sensor 1 shares its channel with the ``AD1IN[31]`` ball
+(T13), which means enabling it gives up that ball as an analog input; sensors
+2 and 3 sit on channels that have no ball at all, so they cost nothing.
+
+Readings are calibrated. During device test TI records three
+(ADC reading, temperature) points per sensor in OTP, and the driver reads them
+back and interpolates, so results come out in real degrees Celsius rather than
+raw codes. The calibration was taken with ADREFHI at 3.3V, which is what this
+board supplies, so no scaling correction is applied. If OTP holds no usable
+calibration the driver reports the raw reading and refuses to invent a
+temperature.
+
+By default each enabled sensor is registered as a character device,
+``CONFIG_RM57_ADC_TEMP_PATH`` with the device number appended - ``/dev/temp0``
+and upwards, numbered from ``CONFIG_RM57_ADC_TEMP_DEVNO``. One ``read()``
+returns a whole ``struct rm57_adc_temp_s``::
+
+    struct rm57_adc_temp_s temp;
+    int fd = open("/dev/temp0", O_RDONLY);
+
+    read(fd, &temp, sizeof(temp));
+    if (temp.calibrated)
+      {
+        printf("%d.%03d C\n", temp.millicel / 1000, abs(temp.millicel % 1000));
+      }
+
+Every read runs a fresh conversion and none of them reports end of file, so
+read a fixed length rather than pointing ``cat`` at the node.
+
+``CONFIG_RM57_ADC_TEMP_UORB`` swaps that for the sensor framework, registering
+each sensor as ``/dev/uorb/sensor_tempN`` instead::
+
+    nsh> sensortest -n 5 temp0
+
+That is the friendlier interface - ``poll()`` and the ``sensortest``
+application come with it - but it selects ``CONFIG_SENSORS`` and pulls in the
+whole UORB upper half, which is a lot to carry for a die temperature. It also
+costs the calibration flag, since ``struct sensor_temp`` has nowhere to put
+it: an uncalibrated sensor fails the read with ``ENODATA`` rather than handing
+back a qualified reading.
+
+Blocking reads are not among what it buys, though. These sensors are
+fetch-mode, and the upper half serves a blocking reader by parking it on a
+per-subscriber semaphore that only a pushing driver ever posts - so a
+fetch-mode node must be opened ``O_NONBLOCK``, which is what ``sensortest``
+does and what ``sensor_poll()`` is written to accommodate. Pointing ``cat`` at
+one of these nodes hangs.
+
+The type is ``SENSOR_TYPE_TEMPERATURE`` rather than
+``SENSOR_TYPE_AMBIENT_TEMPERATURE``: these sensors measure the junction, not
+the room. Readings are fetched on demand - a conversion runs when someone
+reads - so there is no sampling period to configure and ``SNIOC_SET_INTERVAL``
+is accepted and ignored.
+
+Under either arrangement the sensors are also reachable through the
+``ANIOC_RM57_GET_TEMP`` ioctl on any ``/dev/adcN``, which fills in the same
+``struct rm57_adc_temp_s``.
+
+A temperature reading borrows one conversion group for the duration of a
+single conversion, saving and restoring its channel selection, mode and
+interrupt enables. A group that is converting continuously therefore loses a
+few microseconds of sampling to each temperature read.
+
+Shared channels
+---------------
+
+16 channels are wired to both modules. When both convert the same ball their
+sampling windows must either match exactly or not overlap at all, with at
+least two ADC cycles between them (TRM SPNU562A section 22.1). The simplest
+way to satisfy this is to give both groups the same ``..._ACQ`` value.
+
+The board configuration ``rm57l843-launchxl2:adc`` exercises ADC1 Group1 and
+ADC2 Group1 with the ``adc`` example.
 
 EMAC/MDIO (Ethernet)
 =====================

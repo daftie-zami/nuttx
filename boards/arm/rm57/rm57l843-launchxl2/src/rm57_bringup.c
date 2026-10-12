@@ -125,6 +125,14 @@ int rm57_bringup(void)
     }
 #endif
 
+#ifdef CONFIG_RM57_ADC
+  int adc_ret = rm57_adc_setup();
+  if (adc_ret < 0)
+    {
+      return adc_ret;
+    }
+#endif
+
 #ifdef CONFIG_RM57_EMAC
   /* Release the PHY from power-down/reset before anything can bring the
    * interface up and start talking to it over MDIO.

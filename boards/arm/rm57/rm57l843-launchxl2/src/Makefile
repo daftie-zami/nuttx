@@ -38,6 +38,10 @@ ifeq ($(CONFIG_RM57_DCAN),y)
   CSRCS += rm57_can.c
 endif
 
+ifeq ($(CONFIG_RM57_ADC),y)
+  CSRCS += rm57_adc.c
+endif
+
 ifeq ($(CONFIG_RM57_EMAC),y)
 ifeq ($(CONFIG_NETDEV_LATEINIT),y)
   CSRCS += rm57_ethernet.c

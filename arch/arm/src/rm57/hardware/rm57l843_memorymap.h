@@ -52,6 +52,8 @@
 #define RM57_GIO_BASE             0xfff7bc00 /* GIO (gioREG) */
 #define RM57_GIO_PORTA_BASE       0xfff7bc34 /* GIO Port A (gioPORTA) */
 #define RM57_GIO_PORTB_BASE       0xfff7bc54 /* GIO Port B (gioPORTB) */
+#define RM57_ADC1_BASE            0xfff7c000 /* MibADC1 (adcREG1) */
+#define RM57_ADC2_BASE            0xfff7c200 /* MibADC2 (adcREG2) */
 #define RM57_DCAN1_BASE           0xfff7dc00 /* DCAN1 (canREG1) */
 #define RM57_DCAN2_BASE           0xfff7de00 /* DCAN2 (canREG2) */
 #define RM57_DCAN3_BASE           0xfff7e000 /* DCAN3 (canREG3) */
@@ -74,6 +76,20 @@
 #define RM57_DCAN3_RAM_BASE       0xff1a0000 /* DCAN3 mailbox RAM (canRAM3) */
 #define RM57_DCAN2_RAM_BASE       0xff1c0000 /* DCAN2 mailbox RAM (canRAM2) */
 #define RM57_DCAN1_RAM_BASE       0xff1e0000 /* DCAN1 mailbox RAM (canRAM1) */
+
+/* MibADC conversion results RAM.  64 words per module, partitioned between
+ * the Event/Group1/Group2 conversion groups by ADBNDCR.  The parity bits are
+ * mapped 4KB above the RAM base and are only writable while ADPARCR.TEST is
+ * set.  The look-up tables used by the enhanced channel selection mode sit
+ * 8KB above the RAM base; only ADC1 implements that mode (TRM SPNU562A
+ * sections 22.2.2.2.2 and 22.2.7).
+ */
+
+#define RM57_ADC2_RAM_BASE        0xff3a0000 /* ADC2 results RAM (adcRAM2) */
+#define RM57_ADC2_PARRAM_BASE     0xff3a1000 /* ADC2 results RAM parity (adcPARRAM2) */
+#define RM57_ADC1_RAM_BASE        0xff3e0000 /* ADC1 results RAM (adcRAM1) */
+#define RM57_ADC1_PARRAM_BASE     0xff3e1000 /* ADC1 results RAM parity (adcPARRAM1) */
+#define RM57_ADC1_LUT_BASE        0xff3e2000 /* ADC1 channel select LUT (adcLUT1) */
 
 /* System Modules Control Registers and Memories */
 

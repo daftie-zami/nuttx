@@ -36,11 +36,18 @@ Features
   driver but not enabled by this board's default configuration (and
   SCI2-SCI4 pin-mux is not programmed by this board port - see the
   `Pin Mapping`_ note below)
+* Both MibADC modules, with analog inputs broken out on the BoosterPack
+  and edge headers and the ADC reference tied to the 3.3V analog supply
+* An on-board trim potentiometer wired to AD1IN[6], which gives the ADC an
+  adjustable 0V to +3V3 input with no external wiring (see the ``adc``
+  configuration below)
+* Three on-die temperature sensors, read through the ADC and calibrated from
+  factory data in OTP
 
 .. note::
 
    Peripherals that are part of the RM57L843 chip itself (N2HET, MibSPI,
-   CAN, ADC, the ESM diagnostic module, PBIST/STC self-test, etc.) but are
+   I2C, the ESM diagnostic module, PBIST/STC self-test, etc.) but are
    not yet wired up by this board port are tracked on the
    :doc:`RM57 chip documentation page </platforms/arm/rm57/index>`.
 
@@ -100,6 +107,22 @@ Only the pins used by the currently supported peripherals are listed.
    * - K19 / H18 / G19 / A14 / P1 / B11 / N19
      - MII_RXCLK / MII_RXD[3:0] / MII_RX_DV / MII_RX_ER
      - EMAC receive, MII mode
+   * - T19
+     - AD1IN[6]
+     - On-board 1k trim potentiometer U10 (wiper, with 4700pF to GND);
+       sweeps 0V to +3V3. ADC1 only - this ball has no AD2IN function
+   * - J1-2 / J1-6
+     - AD1IN[16] / AD2IN[0], AD1IN[17] / AD2IN[1]
+     - Analog inputs on the BoosterPack header, shared between both ADCs
+   * - J3-3 / J3-4
+     - AD1IN[0], AD1IN[7]
+     - Analog inputs on the BoosterPack header, ADC1 only
+   * - J3-5 to J3-8
+     - AD1IN[18:21] / AD2IN[2:5]
+     - Analog inputs on the BoosterPack header, shared between both ADCs
+   * - V15 / V16
+     - ADREFHI / ADREFLO
+     - ADC reference, tied to VCCAD (3.3V) and VSSAD through 0 ohm links
 
 .. note::
 
@@ -220,3 +243,122 @@ page), NSH's automatic network initialization
 If the network doesn't come up automatically, check ``ifconfig eth0``
 for the assigned address and bring the link up manually with
 ``ifup eth0`` / ``ifdown eth0``.
+
+adc
+---
+
+NuttShell plus both MibADC modules (``CONFIG_RM57_ADC1=y`` and
+``CONFIG_RM57_ADC2=y``, 12-bit) and the ``adc`` example. Offset
+calibration runs at bring-up and the magnitude comparators are built in.
+
+``/dev/adc0`` is ADC1 Group1 converting AD1IN[6], which the board wires to
+the wiper of trim potentiometer U10. The pot's ends sit on +3V3 and GND, so
+turning it sweeps the input across the full conversion range and **this
+configuration needs no external wiring at all**::
+
+    nsh> adc -n 10
+
+Readings should track the pot from close to 0 at one end to close to 4095
+at the other, since ADREFHI is the 3.3V analog supply, and hold to within
+about one LSB at a fixed setting.
+
+The offset calibration reports itself on the boot log when
+``CONFIG_DEBUG_ANALOG_INFO`` is on, and is worth a glance the first time a
+board runs::
+
+    rm57_adc_calibrate: ADC1: calibration offset -1, correction 1
+    rm57_adc_calibrate: ADC2: calibration offset 0, correction 0
+
+A correction of a couple of LSB is what a healthy converter looks like. A
+large one means the calibration conversion is not sampling properly, and since
+the hardware adds that value to *every* subsequent result, it would shift the
+whole channel.
+
+The three on-die temperature sensors are enabled in this configuration too and
+show up as character devices::
+
+    nsh> ls /dev/temp*
+    /dev/temp0
+    /dev/temp1
+    /dev/temp2
+    nsh> hexdump /dev/temp0 -n 12
+
+``/dev/temp0`` is sensor 1 on ADC1, ``/dev/temp1`` and ``/dev/temp2`` are
+sensors 2 and 3 on ADC2. A read returns a ``struct rm57_adc_temp_s``: the raw
+code, the temperature in milli-Celsius and the flag saying the OTP calibration
+was usable. All three read the same die, so at idle they should agree within a
+few degrees, sitting somewhat above room temperature. Warming the package with
+a finger should move them within a second or two.
+
+Turning on ``CONFIG_RM57_ADC_TEMP_UORB`` (with ``CONFIG_SYSTEM_SENSORTEST``)
+replaces those nodes with UORB ones instead - that is what the ``temp``
+configuration below does.
+
+``/dev/adc1`` is ADC2 Group1 converting AD2IN[0]. That ball is shared with
+AD1IN[16] and comes out on J1-2, so it floats until something drives it;
+J1-1 (+3V3) and J3-2 (GND) sit next to it on the BoosterPack header, which
+is enough to check both rails with a single jumper.
+
+.. note::
+
+   Both groups use ``_ACQ=30``, a sampling window of 32 ADCLK cycles or
+   about 3.4µs, rather than the 8 the Kconfig defaults to. The trim pot
+   presents up to 250 ohms at its wiper and drives the 4700pF capacitor at
+   the pin, an RC of roughly 1.2µs, and a window of about three time
+   constants keeps the settling error near one LSB even when AD1IN[6] is
+   converted in sequence with channels at very different voltages. The
+   datasheet minimum, ``td(SH)`` of 0.2µs, is far below either value.
+
+temp
+----
+
+The ``adc`` configuration with the three on-die temperature sensors published
+through the sensor framework instead of as character devices
+(``CONFIG_RM57_ADC_TEMP_UORB``), plus ``sensortest`` to read them and the
+sensor subsystem's debug output so the boot log carries each sensor's factory
+calibration::
+
+    nsh> ls /dev/uorb
+    sensor_temp0
+    sensor_temp1
+    sensor_temp2
+    nsh> sensortest -n 5 temp0
+
+``sensor_temp0`` is sensor 1 on ADC1; ``sensor_temp1`` and ``sensor_temp2``
+are sensors 2 and 3 on ADC2. All three read the same die at different points
+on it. On a board idling at a room temperature of about 22°C they read 41.6°C,
+40.0°C and 44.7°C a minute after reset, stable to about ±0.2°C - one LSB - so
+a few degrees of spread between them is normal and not a fault.
+
+During bring-up the boot log is the more informative half. Each sensor's three
+OTP calibration points are printed as they were read, along with a trial
+conversion::
+
+    Sensor 1 OTP point 1: 233K (-40150 mC) reads 1427
+    Sensor 1 OTP point 2: 303K (29850 mC) reads 1879
+    Sensor 1 OTP point 3: 398K (124850 mC) reads 2461
+    Sensor 1 reads raw 1923, 37032 mC
+
+So the device is characterised at -40°C, +30°C and +125°C, and the reading
+rises with temperature at roughly six codes per degree. Blank OTP reads as
+``0xffff``; a "temperature" outside the 200-500K plausibility window is
+rejected, and would suggest the OTP region is being fetched as normal memory
+with errata L2FMC#5 substituting instruction opcodes for the data.
+
+Note that the trial conversion above reads lower than the numbers further up -
+37.0°C against 41.6°C - because it runs a second after reset, before the die
+has warmed to its idle temperature. That drift is itself a check on the sign
+of the calibration. Pressing a finger on the package makes all three readings
+*fall*, which is also right: the die runs hotter than skin, so a finger is a
+heatsink rather than a heat source. Use hot air if you want to confirm the
+other direction.
+
+.. note::
+
+   Reading one of these nodes with ``cat`` will hang, and that is the sensor
+   framework's fetch model rather than a driver fault: a fetch-mode sensor
+   produces a sample only when someone asks for one, and the upper half parks
+   a blocking reader on a semaphore that nothing in that model can post.
+   ``sensor_poll()`` handles the non-blocking case instead, which is why
+   ``sensortest`` - it opens ``O_NONBLOCK`` - works. Use it, or open the node
+   non-blocking yourself.

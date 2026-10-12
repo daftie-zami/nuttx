@@ -102,6 +102,19 @@ int rm57_can_setup(void);
 #endif
 
 /****************************************************************************
+ * Name: rm57_adc_setup
+ *
+ * Description:
+ *   Register every enabled MibADC conversion group as its own /dev/adcN
+ *   character device - see src/rm57_adc.c for the board's analog wiring.
+ *
+ ****************************************************************************/
+
+#ifdef CONFIG_RM57_ADC
+int rm57_adc_setup(void);
+#endif
+
+/****************************************************************************
  * Name: rm57_eth_setup
  *
  * Description:

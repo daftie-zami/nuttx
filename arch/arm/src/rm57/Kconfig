@@ -457,6 +457,936 @@ config RM57_DCAN_LOOPBACK
 
 endif # RM57_DCAN
 
+config RM57_ADC
+	bool
+	default n
+	---help---
+		Hidden umbrella symbol selected by any RM57_ADCn instance;
+		pulls the shared MibADC driver into the build.
+
+config RM57_ADC_HAVE_DMA
+	bool
+	default n
+	---help---
+		Hidden symbol selected by any conversion group configured to
+		move its results with the DMA controller.
+
+menuconfig RM57_ADC1
+	bool "MibADC1 (32 channels)"
+	default n
+	select RM57_ADC
+	select ADC
+	select ANALOG
+	---help---
+		TI MibADC module 1, a 10/12-bit successive approximation
+		converter with 32 analog inputs and three independent
+		conversion groups.
+
+if RM57_ADC1
+
+choice
+	prompt "ADC1 resolution"
+	default RM57_ADC1_12BIT
+	---help---
+		Resolution of the converter core.  This is a module-wide
+		setting: all three conversion groups share it.
+
+config RM57_ADC1_12BIT
+	bool "12-bit"
+
+config RM57_ADC1_10BIT
+	bool "10-bit"
+
+endchoice # ADC1 resolution
+
+config RM57_ADC1_CLOCK
+	int "ADC1 conversion clock (Hz)"
+	default 9375000
+	range 2400000 30000000
+	---help---
+		Target ADCLK frequency.  The prescaler is computed from
+		BOARD_VCLK_FREQUENCY as ADCLK = VCLK / (PS + 1) and rounded so
+		the result never exceeds this value.  SPNS215 specifies
+		tc(ADCLK) >= 33ns, i.e. an ADCLK ceiling of 30MHz, which is
+		checked at compile time.
+
+menuconfig RM57_ADC1_EV
+	bool "ADC1 Event group"
+	default n
+	---help---
+		Expose the ADC1 Event group as its own /dev/adcN character device.
+		The group has an independent channel selection, trigger source,
+		sampling window, results FIFO and interrupt (VIM channel
+		RM57_REQ_ADC1GROUP0).
+
+if RM57_ADC1_EV
+
+config RM57_ADC1_EV_CHANMASK
+	hex "ADC1 Event group channel mask"
+	default 0x1
+	---help---
+		Bit mask of the analog inputs converted by this group; bit n
+		selects AD1IN[n].  In the default sequential mode the selected
+		channels are converted in ascending channel number.
+
+config RM57_ADC1_EV_BUFS
+	int "ADC1 Event group result buffers"
+	default 16
+	range 0 64
+	---help---
+		Words of the module's 64-word results RAM reserved for this
+		group.  The Event group and Group1 counts must be even because
+		ADBNDCR allocates the memory in pairs, and the three groups of
+		one module must not ask for more than 64 words in total.  Both
+		rules are checked at compile time.
+
+config RM57_ADC1_EV_THRESHOLD
+	int "ADC1 Event group interrupt threshold"
+	default 8
+	range 1 511
+	---help---
+		How many conversion results accumulate before the group raises
+		its threshold interrupt.  Larger values reduce the interrupt
+		rate but need a correspondingly larger result buffer count.
+
+config RM57_ADC1_EV_ACQ
+	int "ADC1 Event group acquisition time"
+	default 8
+	range 1 4095
+	---help---
+		Sampling window in ADCLK cycles minus two: SW = ACQ + 2, and the
+		hardware requires SW >= 3.  The input impedance sets the real
+		minimum - see the sample and hold timings in SPNS215.  When both
+		modules convert a shared channel their windows must either match
+		exactly or not overlap at all (TRM section 22.1).
+
+config RM57_ADC1_EV_CONTINUOUS
+	bool "ADC1 Event group continuous conversion"
+	default n
+	---help---
+		Convert the selected channels continuously instead of once per
+		trigger.  Continuous groups report results through the threshold
+		interrupt; single-shot groups use the conversion end interrupt.
+
+config RM57_ADC1_EV_FREEZE
+	bool "ADC1 Event group freeze enable"
+	default n
+	---help---
+		Allow this group's conversion sequence to be suspended while
+		another group of the same module is serviced, resuming from
+		where it stopped afterwards.
+
+config RM57_ADC1_EV_OVRWRITE
+	bool "ADC1 Event group overwrite on overrun"
+	default n
+	---help---
+		Let the ADC overwrite the oldest results when this group's
+		memory fills up.  Without it the group stalls until the
+		application has read the memory out.
+
+# The Event group has no hardware trigger enable bit - bit 3 of ADEVMODECR
+# is reserved, where Group1 and Group2 have HW_TRIG - because it is always
+# started by its trigger source.  Only the source and its edge are
+# selectable.
+
+config RM57_ADC1_EV_TRIGSRC
+	int "ADC1 Event group trigger source"
+	default 0
+	range 0 7
+	---help---
+		Hardware trigger source: 0 = AD1EVT pin, 1 = N2HET1[8],
+		2 = N2HET1[10], 3 = RTI compare 0, 4 = N2HET1[12],
+		5 = N2HET1[14], 6 = GIOB[0], 7 = GIOB[1].  A second set of
+		sources is reachable through the ALT_ADC_TRIGGER pin mux
+		control; see SPNS215.
+
+config RM57_ADC1_EV_RISING
+	bool "ADC1 Event group trigger on rising edge"
+	default y
+	---help---
+		Trigger on the low-to-high transition of the selected source
+		rather than the high-to-low transition.
+
+config RM57_ADC1_EV_DMA
+	bool "ADC1 Event group DMA result transfer"
+	default n
+	depends on RM57_DMA
+	select RM57_ADC_HAVE_DMA
+	---help---
+		Move conversion results out of the group's FIFO with the DMA
+		controller (request line DMA_REQ_MIBADC1_EVT) instead of reading
+		them in the interrupt handler, and deliver them to the upper
+		half in batches.
+
+config RM57_ADC1_EV_DMA_NSAMPLES
+	int "ADC1 Event group DMA samples per transfer"
+	default 16
+	range 1 256
+	depends on RM57_ADC1_EV_DMA
+	---help---
+		Results delivered per DMA callback.  The landing buffer holds
+		two of these so the ADC can fill one half while the other is
+		being handed to the upper half.  Two constraints are checked
+		at compile time: it must not exceed
+		RM57_ADC_DMA_MAXSAMPLES, which sizes the scratch arrays the
+		callback puts on the interrupt stack, and it must be a
+		multiple of eight so each half of the ring is a whole number
+		of D-cache lines.
+
+endif # RM57_ADC1_EV
+
+menuconfig RM57_ADC1_G1
+	bool "ADC1 Group1"
+	default n
+	---help---
+		Expose the ADC1 Group1 as its own /dev/adcN character device.
+		The group has an independent channel selection, trigger source,
+		sampling window, results FIFO and interrupt (VIM channel
+		RM57_REQ_ADC1GROUP1).
+
+if RM57_ADC1_G1
+
+config RM57_ADC1_G1_CHANMASK
+	hex "ADC1 Group1 channel mask"
+	default 0x1
+	---help---
+		Bit mask of the analog inputs converted by this group; bit n
+		selects AD1IN[n].  In the default sequential mode the selected
+		channels are converted in ascending channel number.
+
+config RM57_ADC1_G1_BUFS
+	int "ADC1 Group1 result buffers"
+	default 16
+	range 0 64
+	---help---
+		Words of the module's 64-word results RAM reserved for this
+		group.  The Event group and Group1 counts must be even because
+		ADBNDCR allocates the memory in pairs, and the three groups of
+		one module must not ask for more than 64 words in total.  Both
+		rules are checked at compile time.
+
+config RM57_ADC1_G1_THRESHOLD
+	int "ADC1 Group1 interrupt threshold"
+	default 8
+	range 1 511
+	---help---
+		How many conversion results accumulate before the group raises
+		its threshold interrupt.  Larger values reduce the interrupt
+		rate but need a correspondingly larger result buffer count.
+
+config RM57_ADC1_G1_ACQ
+	int "ADC1 Group1 acquisition time"
+	default 8
+	range 1 4095
+	---help---
+		Sampling window in ADCLK cycles minus two: SW = ACQ + 2, and the
+		hardware requires SW >= 3.  The input impedance sets the real
+		minimum - see the sample and hold timings in SPNS215.  When both
+		modules convert a shared channel their windows must either match
+		exactly or not overlap at all (TRM section 22.1).
+
+config RM57_ADC1_G1_CONTINUOUS
+	bool "ADC1 Group1 continuous conversion"
+	default n
+	---help---
+		Convert the selected channels continuously instead of once per
+		trigger.  Continuous groups report results through the threshold
+		interrupt; single-shot groups use the conversion end interrupt.
+
+config RM57_ADC1_G1_FREEZE
+	bool "ADC1 Group1 freeze enable"
+	default n
+	---help---
+		Allow this group's conversion sequence to be suspended while
+		another group of the same module is serviced, resuming from
+		where it stopped afterwards.
+
+config RM57_ADC1_G1_OVRWRITE
+	bool "ADC1 Group1 overwrite on overrun"
+	default n
+	---help---
+		Let the ADC overwrite the oldest results when this group's
+		memory fills up.  Without it the group stalls until the
+		application has read the memory out.
+
+config RM57_ADC1_G1_HWTRIG
+	bool "ADC1 Group1 hardware triggered"
+	default n
+	---help---
+		Start conversions from a hardware event rather than from a write
+		to the channel select register.
+
+config RM57_ADC1_G1_TRIGSRC
+	int "ADC1 Group1 trigger source"
+	default 0
+	range 0 7
+	depends on RM57_ADC1_G1_HWTRIG
+	---help---
+		Hardware trigger source: 0 = AD1EVT pin, 1 = N2HET1[8],
+		2 = N2HET1[10], 3 = RTI compare 0, 4 = N2HET1[12],
+		5 = N2HET1[14], 6 = GIOB[0], 7 = GIOB[1].  A second set of
+		sources is reachable through the ALT_ADC_TRIGGER pin mux
+		control; see SPNS215.
+
+config RM57_ADC1_G1_RISING
+	bool "ADC1 Group1 trigger on rising edge"
+	default y
+	depends on RM57_ADC1_G1_HWTRIG
+	---help---
+		Trigger on the low-to-high transition of the selected source
+		rather than the high-to-low transition.
+
+config RM57_ADC1_G1_DMA
+	bool "ADC1 Group1 DMA result transfer"
+	default n
+	depends on RM57_DMA
+	select RM57_ADC_HAVE_DMA
+	---help---
+		Move conversion results out of the group's FIFO with the DMA
+		controller (request line DMA_REQ_MIBADC1_G1) instead of reading
+		them in the interrupt handler, and deliver them to the upper
+		half in batches.
+
+config RM57_ADC1_G1_DMA_NSAMPLES
+	int "ADC1 Group1 DMA samples per transfer"
+	default 16
+	range 1 256
+	depends on RM57_ADC1_G1_DMA
+	---help---
+		Results delivered per DMA callback.  The landing buffer holds
+		two of these so the ADC can fill one half while the other is
+		being handed to the upper half.  Two constraints are checked
+		at compile time: it must not exceed
+		RM57_ADC_DMA_MAXSAMPLES, which sizes the scratch arrays the
+		callback puts on the interrupt stack, and it must be a
+		multiple of eight so each half of the ring is a whole number
+		of D-cache lines.
+
+endif # RM57_ADC1_G1
+
+menuconfig RM57_ADC1_G2
+	bool "ADC1 Group2"
+	default n
+	---help---
+		Expose the ADC1 Group2 as its own /dev/adcN character device.
+		The group has an independent channel selection, trigger source,
+		sampling window, results FIFO and interrupt (VIM channel
+		RM57_REQ_ADC1GROUP2).
+
+if RM57_ADC1_G2
+
+config RM57_ADC1_G2_CHANMASK
+	hex "ADC1 Group2 channel mask"
+	default 0x1
+	---help---
+		Bit mask of the analog inputs converted by this group; bit n
+		selects AD1IN[n].  In the default sequential mode the selected
+		channels are converted in ascending channel number.
+
+config RM57_ADC1_G2_BUFS
+	int "ADC1 Group2 result buffers"
+	default 16
+	range 0 64
+	---help---
+		Words of the module's 64-word results RAM reserved for this
+		group.  The Event group and Group1 counts must be even because
+		ADBNDCR allocates the memory in pairs, and the three groups of
+		one module must not ask for more than 64 words in total.  Both
+		rules are checked at compile time.
+
+config RM57_ADC1_G2_THRESHOLD
+	int "ADC1 Group2 interrupt threshold"
+	default 8
+	range 1 511
+	---help---
+		How many conversion results accumulate before the group raises
+		its threshold interrupt.  Larger values reduce the interrupt
+		rate but need a correspondingly larger result buffer count.
+
+config RM57_ADC1_G2_ACQ
+	int "ADC1 Group2 acquisition time"
+	default 8
+	range 1 4095
+	---help---
+		Sampling window in ADCLK cycles minus two: SW = ACQ + 2, and the
+		hardware requires SW >= 3.  The input impedance sets the real
+		minimum - see the sample and hold timings in SPNS215.  When both
+		modules convert a shared channel their windows must either match
+		exactly or not overlap at all (TRM section 22.1).
+
+config RM57_ADC1_G2_CONTINUOUS
+	bool "ADC1 Group2 continuous conversion"
+	default n
+	---help---
+		Convert the selected channels continuously instead of once per
+		trigger.  Continuous groups report results through the threshold
+		interrupt; single-shot groups use the conversion end interrupt.
+
+config RM57_ADC1_G2_FREEZE
+	bool "ADC1 Group2 freeze enable"
+	default n
+	---help---
+		Allow this group's conversion sequence to be suspended while
+		another group of the same module is serviced, resuming from
+		where it stopped afterwards.
+
+config RM57_ADC1_G2_OVRWRITE
+	bool "ADC1 Group2 overwrite on overrun"
+	default n
+	---help---
+		Let the ADC overwrite the oldest results when this group's
+		memory fills up.  Without it the group stalls until the
+		application has read the memory out.
+
+config RM57_ADC1_G2_HWTRIG
+	bool "ADC1 Group2 hardware triggered"
+	default n
+	---help---
+		Start conversions from a hardware event rather than from a write
+		to the channel select register.
+
+config RM57_ADC1_G2_TRIGSRC
+	int "ADC1 Group2 trigger source"
+	default 0
+	range 0 7
+	depends on RM57_ADC1_G2_HWTRIG
+	---help---
+		Hardware trigger source: 0 = AD1EVT pin, 1 = N2HET1[8],
+		2 = N2HET1[10], 3 = RTI compare 0, 4 = N2HET1[12],
+		5 = N2HET1[14], 6 = GIOB[0], 7 = GIOB[1].  A second set of
+		sources is reachable through the ALT_ADC_TRIGGER pin mux
+		control; see SPNS215.
+
+config RM57_ADC1_G2_RISING
+	bool "ADC1 Group2 trigger on rising edge"
+	default y
+	depends on RM57_ADC1_G2_HWTRIG
+	---help---
+		Trigger on the low-to-high transition of the selected source
+		rather than the high-to-low transition.
+
+config RM57_ADC1_G2_DMA
+	bool "ADC1 Group2 DMA result transfer"
+	default n
+	depends on RM57_DMA
+	select RM57_ADC_HAVE_DMA
+	---help---
+		Move conversion results out of the group's FIFO with the DMA
+		controller (request line DMA_REQ_MIBADC1_G2) instead of reading
+		them in the interrupt handler, and deliver them to the upper
+		half in batches.
+
+config RM57_ADC1_G2_DMA_NSAMPLES
+	int "ADC1 Group2 DMA samples per transfer"
+	default 16
+	range 1 256
+	depends on RM57_ADC1_G2_DMA
+	---help---
+		Results delivered per DMA callback.  The landing buffer holds
+		two of these so the ADC can fill one half while the other is
+		being handed to the upper half.  Two constraints are checked
+		at compile time: it must not exceed
+		RM57_ADC_DMA_MAXSAMPLES, which sizes the scratch arrays the
+		callback puts on the interrupt stack, and it must be a
+		multiple of eight so each half of the ring is a whole number
+		of D-cache lines.
+
+endif # RM57_ADC1_G2
+endif # RM57_ADC1
+
+menuconfig RM57_ADC2
+	bool "MibADC2 (25 channels)"
+	default n
+	select RM57_ADC
+	select ADC
+	select ANALOG
+	---help---
+		TI MibADC module 2, a 10/12-bit successive approximation
+		converter with 25 analog inputs and three independent
+		conversion groups.
+		ADC2 shares 16 of its inputs with ADC1; when both modules
+		convert a shared channel their sampling windows must either
+		match exactly or not overlap (TRM SPNU562A section 22.1).
+
+if RM57_ADC2
+
+choice
+	prompt "ADC2 resolution"
+	default RM57_ADC2_12BIT
+	---help---
+		Resolution of the converter core.  This is a module-wide
+		setting: all three conversion groups share it.
+
+config RM57_ADC2_12BIT
+	bool "12-bit"
+
+config RM57_ADC2_10BIT
+	bool "10-bit"
+
+endchoice # ADC2 resolution
+
+config RM57_ADC2_CLOCK
+	int "ADC2 conversion clock (Hz)"
+	default 9375000
+	range 2400000 30000000
+	---help---
+		Target ADCLK frequency.  The prescaler is computed from
+		BOARD_VCLK_FREQUENCY as ADCLK = VCLK / (PS + 1) and rounded so
+		the result never exceeds this value.  SPNS215 specifies
+		tc(ADCLK) >= 33ns, i.e. an ADCLK ceiling of 30MHz, which is
+		checked at compile time.
+
+menuconfig RM57_ADC2_EV
+	bool "ADC2 Event group"
+	default n
+	---help---
+		Expose the ADC2 Event group as its own /dev/adcN character device.
+		The group has an independent channel selection, trigger source,
+		sampling window, results FIFO and interrupt (VIM channel
+		RM57_REQ_ADC2GROUP0).
+
+if RM57_ADC2_EV
+
+config RM57_ADC2_EV_CHANMASK
+	hex "ADC2 Event group channel mask"
+	default 0x1
+	---help---
+		Bit mask of the analog inputs converted by this group; bit n
+		selects AD2IN[n].  In the default sequential mode the selected
+		channels are converted in ascending channel number.
+
+config RM57_ADC2_EV_BUFS
+	int "ADC2 Event group result buffers"
+	default 16
+	range 0 64
+	---help---
+		Words of the module's 64-word results RAM reserved for this
+		group.  The Event group and Group1 counts must be even because
+		ADBNDCR allocates the memory in pairs, and the three groups of
+		one module must not ask for more than 64 words in total.  Both
+		rules are checked at compile time.
+
+config RM57_ADC2_EV_THRESHOLD
+	int "ADC2 Event group interrupt threshold"
+	default 8
+	range 1 511
+	---help---
+		How many conversion results accumulate before the group raises
+		its threshold interrupt.  Larger values reduce the interrupt
+		rate but need a correspondingly larger result buffer count.
+
+config RM57_ADC2_EV_ACQ
+	int "ADC2 Event group acquisition time"
+	default 8
+	range 1 4095
+	---help---
+		Sampling window in ADCLK cycles minus two: SW = ACQ + 2, and the
+		hardware requires SW >= 3.  The input impedance sets the real
+		minimum - see the sample and hold timings in SPNS215.  When both
+		modules convert a shared channel their windows must either match
+		exactly or not overlap at all (TRM section 22.1).
+
+config RM57_ADC2_EV_CONTINUOUS
+	bool "ADC2 Event group continuous conversion"
+	default n
+	---help---
+		Convert the selected channels continuously instead of once per
+		trigger.  Continuous groups report results through the threshold
+		interrupt; single-shot groups use the conversion end interrupt.
+
+config RM57_ADC2_EV_FREEZE
+	bool "ADC2 Event group freeze enable"
+	default n
+	---help---
+		Allow this group's conversion sequence to be suspended while
+		another group of the same module is serviced, resuming from
+		where it stopped afterwards.
+
+config RM57_ADC2_EV_OVRWRITE
+	bool "ADC2 Event group overwrite on overrun"
+	default n
+	---help---
+		Let the ADC overwrite the oldest results when this group's
+		memory fills up.  Without it the group stalls until the
+		application has read the memory out.
+
+# The Event group has no hardware trigger enable bit - bit 3 of ADEVMODECR
+# is reserved, where Group1 and Group2 have HW_TRIG - because it is always
+# started by its trigger source.  Only the source and its edge are
+# selectable.
+
+config RM57_ADC2_EV_TRIGSRC
+	int "ADC2 Event group trigger source"
+	default 0
+	range 0 7
+	---help---
+		Hardware trigger source: 0 = AD2EVT pin, 1 = N2HET1[8],
+		2 = N2HET1[10], 3 = RTI compare 0, 4 = N2HET1[12],
+		5 = N2HET1[14], 6 = GIOB[0], 7 = GIOB[1].  A second set of
+		sources is reachable through the ALT_ADC_TRIGGER pin mux
+		control; see SPNS215.
+
+config RM57_ADC2_EV_RISING
+	bool "ADC2 Event group trigger on rising edge"
+	default y
+	---help---
+		Trigger on the low-to-high transition of the selected source
+		rather than the high-to-low transition.
+
+# ADC2's DMA request lines are alternate functions shared with MibSPI1 and
+# MibSPI3 (lines 14, 16 and 17), so selecting them needs the system module's
+# DMA request source mux to be reprogrammed.  That is not implemented, and
+# ADC2 therefore has no DMA option.
+
+endif # RM57_ADC2_EV
+
+menuconfig RM57_ADC2_G1
+	bool "ADC2 Group1"
+	default n
+	---help---
+		Expose the ADC2 Group1 as its own /dev/adcN character device.
+		The group has an independent channel selection, trigger source,
+		sampling window, results FIFO and interrupt (VIM channel
+		RM57_REQ_ADC2GROUP1).
+
+if RM57_ADC2_G1
+
+config RM57_ADC2_G1_CHANMASK
+	hex "ADC2 Group1 channel mask"
+	default 0x1
+	---help---
+		Bit mask of the analog inputs converted by this group; bit n
+		selects AD2IN[n].  In the default sequential mode the selected
+		channels are converted in ascending channel number.
+
+config RM57_ADC2_G1_BUFS
+	int "ADC2 Group1 result buffers"
+	default 16
+	range 0 64
+	---help---
+		Words of the module's 64-word results RAM reserved for this
+		group.  The Event group and Group1 counts must be even because
+		ADBNDCR allocates the memory in pairs, and the three groups of
+		one module must not ask for more than 64 words in total.  Both
+		rules are checked at compile time.
+
+config RM57_ADC2_G1_THRESHOLD
+	int "ADC2 Group1 interrupt threshold"
+	default 8
+	range 1 511
+	---help---
+		How many conversion results accumulate before the group raises
+		its threshold interrupt.  Larger values reduce the interrupt
+		rate but need a correspondingly larger result buffer count.
+
+config RM57_ADC2_G1_ACQ
+	int "ADC2 Group1 acquisition time"
+	default 8
+	range 1 4095
+	---help---
+		Sampling window in ADCLK cycles minus two: SW = ACQ + 2, and the
+		hardware requires SW >= 3.  The input impedance sets the real
+		minimum - see the sample and hold timings in SPNS215.  When both
+		modules convert a shared channel their windows must either match
+		exactly or not overlap at all (TRM section 22.1).
+
+config RM57_ADC2_G1_CONTINUOUS
+	bool "ADC2 Group1 continuous conversion"
+	default n
+	---help---
+		Convert the selected channels continuously instead of once per
+		trigger.  Continuous groups report results through the threshold
+		interrupt; single-shot groups use the conversion end interrupt.
+
+config RM57_ADC2_G1_FREEZE
+	bool "ADC2 Group1 freeze enable"
+	default n
+	---help---
+		Allow this group's conversion sequence to be suspended while
+		another group of the same module is serviced, resuming from
+		where it stopped afterwards.
+
+config RM57_ADC2_G1_OVRWRITE
+	bool "ADC2 Group1 overwrite on overrun"
+	default n
+	---help---
+		Let the ADC overwrite the oldest results when this group's
+		memory fills up.  Without it the group stalls until the
+		application has read the memory out.
+
+config RM57_ADC2_G1_HWTRIG
+	bool "ADC2 Group1 hardware triggered"
+	default n
+	---help---
+		Start conversions from a hardware event rather than from a write
+		to the channel select register.
+
+config RM57_ADC2_G1_TRIGSRC
+	int "ADC2 Group1 trigger source"
+	default 0
+	range 0 7
+	depends on RM57_ADC2_G1_HWTRIG
+	---help---
+		Hardware trigger source: 0 = AD2EVT pin, 1 = N2HET1[8],
+		2 = N2HET1[10], 3 = RTI compare 0, 4 = N2HET1[12],
+		5 = N2HET1[14], 6 = GIOB[0], 7 = GIOB[1].  A second set of
+		sources is reachable through the ALT_ADC_TRIGGER pin mux
+		control; see SPNS215.
+
+config RM57_ADC2_G1_RISING
+	bool "ADC2 Group1 trigger on rising edge"
+	default y
+	depends on RM57_ADC2_G1_HWTRIG
+	---help---
+		Trigger on the low-to-high transition of the selected source
+		rather than the high-to-low transition.
+
+# ADC2's DMA request lines are alternate functions shared with MibSPI1 and
+# MibSPI3 (lines 14, 16 and 17), so selecting them needs the system module's
+# DMA request source mux to be reprogrammed.  That is not implemented, and
+# ADC2 therefore has no DMA option.
+
+endif # RM57_ADC2_G1
+
+menuconfig RM57_ADC2_G2
+	bool "ADC2 Group2"
+	default n
+	---help---
+		Expose the ADC2 Group2 as its own /dev/adcN character device.
+		The group has an independent channel selection, trigger source,
+		sampling window, results FIFO and interrupt (VIM channel
+		RM57_REQ_ADC2GROUP2).
+
+if RM57_ADC2_G2
+
+config RM57_ADC2_G2_CHANMASK
+	hex "ADC2 Group2 channel mask"
+	default 0x1
+	---help---
+		Bit mask of the analog inputs converted by this group; bit n
+		selects AD2IN[n].  In the default sequential mode the selected
+		channels are converted in ascending channel number.
+
+config RM57_ADC2_G2_BUFS
+	int "ADC2 Group2 result buffers"
+	default 16
+	range 0 64
+	---help---
+		Words of the module's 64-word results RAM reserved for this
+		group.  The Event group and Group1 counts must be even because
+		ADBNDCR allocates the memory in pairs, and the three groups of
+		one module must not ask for more than 64 words in total.  Both
+		rules are checked at compile time.
+
+config RM57_ADC2_G2_THRESHOLD
+	int "ADC2 Group2 interrupt threshold"
+	default 8
+	range 1 511
+	---help---
+		How many conversion results accumulate before the group raises
+		its threshold interrupt.  Larger values reduce the interrupt
+		rate but need a correspondingly larger result buffer count.
+
+config RM57_ADC2_G2_ACQ
+	int "ADC2 Group2 acquisition time"
+	default 8
+	range 1 4095
+	---help---
+		Sampling window in ADCLK cycles minus two: SW = ACQ + 2, and the
+		hardware requires SW >= 3.  The input impedance sets the real
+		minimum - see the sample and hold timings in SPNS215.  When both
+		modules convert a shared channel their windows must either match
+		exactly or not overlap at all (TRM section 22.1).
+
+config RM57_ADC2_G2_CONTINUOUS
+	bool "ADC2 Group2 continuous conversion"
+	default n
+	---help---
+		Convert the selected channels continuously instead of once per
+		trigger.  Continuous groups report results through the threshold
+		interrupt; single-shot groups use the conversion end interrupt.
+
+config RM57_ADC2_G2_FREEZE
+	bool "ADC2 Group2 freeze enable"
+	default n
+	---help---
+		Allow this group's conversion sequence to be suspended while
+		another group of the same module is serviced, resuming from
+		where it stopped afterwards.
+
+config RM57_ADC2_G2_OVRWRITE
+	bool "ADC2 Group2 overwrite on overrun"
+	default n
+	---help---
+		Let the ADC overwrite the oldest results when this group's
+		memory fills up.  Without it the group stalls until the
+		application has read the memory out.
+
+config RM57_ADC2_G2_HWTRIG
+	bool "ADC2 Group2 hardware triggered"
+	default n
+	---help---
+		Start conversions from a hardware event rather than from a write
+		to the channel select register.
+
+config RM57_ADC2_G2_TRIGSRC
+	int "ADC2 Group2 trigger source"
+	default 0
+	range 0 7
+	depends on RM57_ADC2_G2_HWTRIG
+	---help---
+		Hardware trigger source: 0 = AD2EVT pin, 1 = N2HET1[8],
+		2 = N2HET1[10], 3 = RTI compare 0, 4 = N2HET1[12],
+		5 = N2HET1[14], 6 = GIOB[0], 7 = GIOB[1].  A second set of
+		sources is reachable through the ALT_ADC_TRIGGER pin mux
+		control; see SPNS215.
+
+config RM57_ADC2_G2_RISING
+	bool "ADC2 Group2 trigger on rising edge"
+	default y
+	depends on RM57_ADC2_G2_HWTRIG
+	---help---
+		Trigger on the low-to-high transition of the selected source
+		rather than the high-to-low transition.
+
+# ADC2's DMA request lines are alternate functions shared with MibSPI1 and
+# MibSPI3 (lines 14, 16 and 17), so selecting them needs the system module's
+# DMA request source mux to be reprogrammed.  That is not implemented, and
+# ADC2 therefore has no DMA option.
+
+endif # RM57_ADC2_G2
+endif # RM57_ADC2
+
+if RM57_ADC
+
+config RM57_ADC_CALIBRATE
+	bool "Calibrate the ADC at initialization"
+	default y
+	---help---
+		Run the offset error calibration sequence when the first group
+		of a module is registered.  Four internal reference voltages are
+		converted and the deviation of their average from mid scale is
+		loaded into ADCALR, which the hardware then adds to every
+		conversion result (TRM SPNU562A section 22.2.6.1).
+
+config RM57_ADC_MAGCOMP
+	bool "Magnitude compare interrupts"
+	default n
+	---help---
+		Build support for the three hardware magnitude comparators of
+		each module, which interrupt when a monitored channel's result
+		crosses a threshold.  This also backs the generic
+		ANIOC_WDOG_UPPER and ANIOC_WDOG_LOWER commands, which claim
+		comparators 0 and 1 of the owning module - so two groups of
+		one module cannot both use the generic watchdog without
+		overwriting each other.
+
+		The comparators have their own VIM channel, separate from the
+		conversion group interrupts, and the driver attaches a handler
+		to it.  There is no notification path for an analog watchdog
+		in the NuttX ADC upper half, though, so a crossing is
+		acknowledged and counted rather than reported to the
+		application.
+
+config RM57_ADC_ENHANCED_CHSEL
+	bool "Enhanced channel selection mode"
+	default n
+	depends on RM57_ADC1
+	---help---
+		Build support for the look-up table based conversion order,
+		which converts channels in an arbitrary user-defined sequence
+		rather than in ascending channel number.  Only ADC1 implements
+		this mode (TRM SPNU562A section 22.2.2.2).
+
+config RM57_ADC_PARITY
+	bool "Results RAM parity checking"
+	default y
+	---help---
+		Enable the parity check on the conversion results RAM.  A parity
+		error is reported to the Error Signalling Module and the failing
+		address is latched in ADPARADDR.  The RAM is auto-initialized
+		before the check is switched on so untouched buffers cannot
+		report spurious errors.
+
+config RM57_ADC_TEMPSENSOR
+	bool "On-chip temperature sensors"
+	default n
+	---help---
+		Three on-die temperature sensors, each multiplexed onto one ADC
+		channel: sensor 1 on ADC1 channel 31, sensors 2 and 3 on ADC2
+		channels 31 and 30 (TRM SPNU562A section 6.5.13).  The driver
+		releases them from power down, routes them onto their channels,
+		and applies the factory calibration recorded in TI OTP so
+		readings come out in real degrees Celsius.
+
+if RM57_ADC_TEMPSENSOR
+
+config RM57_ADC_TEMP1
+	bool "Temperature sensor 1 (ADC1 channel 31)"
+	default y
+	depends on RM57_ADC1
+	---help---
+		Sensor 1 shares its channel with the AD1IN[31] ball, so
+		enabling it makes that ball unavailable as an analog input.
+
+config RM57_ADC_TEMP2
+	bool "Temperature sensor 2 (ADC2 channel 31)"
+	default y
+	depends on RM57_ADC2
+
+config RM57_ADC_TEMP3
+	bool "Temperature sensor 3 (ADC2 channel 30)"
+	default y
+	depends on RM57_ADC2
+
+config RM57_ADC_TEMP_UORB
+	bool "Publish as UORB sensor nodes"
+	default n
+	select SENSORS
+	---help---
+		Register each enabled sensor with the UORB sensor framework as
+		/dev/uorb/sensor_tempN, readable with the sensortest
+		application.  This pulls in the whole sensor upper half, so it
+		is worth having only on a board that speaks UORB already.
+
+		Without it each sensor is a plain character device instead, and
+		one read() returns a whole struct rm57_adc_temp_s.  Either way
+		the sensors also stay reachable through the ANIOC_RM57_GET_TEMP
+		ioctl on any /dev/adcN.
+
+config RM57_ADC_TEMP_PATH
+	string "Temperature device path prefix"
+	default "/dev/temp"
+	depends on !RM57_ADC_TEMP_UORB
+	---help---
+		Prefix of the character device registered for each sensor; the
+		device number is appended, giving /dev/temp0 and upwards with
+		the default.
+
+config RM57_ADC_TEMP_DEVNO
+	int "First device number"
+	default 0
+	range 0 32
+	---help---
+		Device number given to the first enabled sensor; the others
+		follow in order.  Sensors of the same type must not share a
+		device number, so shift this if something else on the board
+		already registers a temperature sensor.
+
+endif # RM57_ADC_TEMPSENSOR
+
+config RM57_ADC_DMA_MAXSAMPLES
+	int "Maximum DMA samples per callback"
+	default 32
+	range 1 256
+	depends on RM57_ADC_HAVE_DMA
+	---help---
+		Upper bound on any group's DMA samples per transfer.  It sizes
+		the scratch arrays the DMA callback uses to hand a batch to the
+		upper half, so keep it as small as the configuration allows.
+
+endif # RM57_ADC
+
 menuconfig RM57_EMAC
 	bool "Ethernet MAC (EMAC/MDIO)"
 	default n

@@ -81,6 +81,7 @@
 #define RM57_REQ_ADC1GROUP2          28 /* ADC1 group 2 interrupt */
 #define RM57_REQ_CAN1LOW             29 /* DCAN1 low level interrupt */
 #define RM57_REQ_MIBSPI2LOW          30 /* MibSPI2 low level interrupt */
+#define RM57_REQ_ADC1MAGCOMP         31 /* MibADC1 magnitude compare */
 #define RM57_REQ_DMAFTCA             33 /* DMA FTCA interrupt */
 #define RM57_REQ_DMALFSA             34 /* DMA LFSA interrupt */
 #define RM57_REQ_CAN2HIGH            35 /* DCAN2 high level interrupt */
@@ -100,6 +101,7 @@
 #define RM57_REQ_CAN3LOW             55 /* DCAN3 low level interrupt */
 #define RM57_REQ_MIBSPI5LOW          56 /* MibSPI5 low level interrupt */
 #define RM57_REQ_ADC2GROUP2          57 /* ADC2 group 2 interrupt */
+#define RM57_REQ_ADC2MAGCOMP         59 /* MibADC2 magnitude compare */
 #define RM57_REQ_CAN3IF3             60 /* DCAN3 IF3 interrupt */
 #define RM57_REQ_HET2HIGH            63 /* HET2 high level interrupt */
 #define RM57_REQ_SCI3HIGH            64 /* SCI3 high level interrupt */

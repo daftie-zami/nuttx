@@ -45,6 +45,13 @@ if(CONFIG_RM57_LIN)
   list(APPEND SRCS rm57_lin.c)
 endif()
 
+if(CONFIG_RM57_ADC)
+  list(APPEND SRCS rm57_adc.c)
+  if(CONFIG_RM57_ADC_TEMPSENSOR)
+    list(APPEND SRCS rm57_adc_temp.c)
+  endif()
+endif()
+
 if(CONFIG_RM57_DCAN)
   list(APPEND SRCS rm57_dcan.c)
   if(CONFIG_CAN)

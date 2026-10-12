@@ -45,6 +45,13 @@ ifeq ($(CONFIG_RM57_LIN),y)
 CHIP_CSRCS += rm57_lin.c
 endif
 
+ifeq ($(CONFIG_RM57_ADC),y)
+CHIP_CSRCS += rm57_adc.c
+ifeq ($(CONFIG_RM57_ADC_TEMPSENSOR),y)
+CHIP_CSRCS += rm57_adc_temp.c
+endif
+endif
+
 ifeq ($(CONFIG_RM57_DCAN),y)
 CHIP_CSRCS += rm57_dcan.c
 ifeq ($(CONFIG_CAN),y)
