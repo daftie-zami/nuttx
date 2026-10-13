@@ -356,6 +356,24 @@
 #  define SYS_MSTGCR_MSTGENA_ENABLE   (10 << SYS_MSTGCR_MSTGENA_SHIFT)
 #  define SYS_MSTGCR_MSTGENA_DISABLE  (5 << SYS_MSTGCR_MSTGENA_SHIFT)
 
+/* Bits 8-9: PBIST ROM clock prescaler.  SPNU562A Table 2-39 divides GCLK1,
+ * SPNS215C 6.13.1 says HCLK; /4 stays under the 82.5 MHz ROM clock limit
+ * on either reading with GCLK1 at 300 MHz.
+ */
+#define SYS_MSTGCR_ROMDIV_SHIFT (8)
+#define SYS_MSTGCR_ROMDIV_MASK        (3 << SYS_MSTGCR_ROMDIV_SHIFT)
+#  define SYS_MSTGCR_ROMDIV_DIV1      (0 << SYS_MSTGCR_ROMDIV_SHIFT)
+#  define SYS_MSTGCR_ROMDIV_DIV2      (1 << SYS_MSTGCR_ROMDIV_SHIFT)
+#  define SYS_MSTGCR_ROMDIV_DIV4      (2 << SYS_MSTGCR_ROMDIV_SHIFT)
+#  define SYS_MSTGCR_ROMDIV_DIV8      (3 << SYS_MSTGCR_ROMDIV_SHIFT)
+
+/* Memory Self-Test/Initialization Enable Register.  In self-test mode
+ * bit 0 enables the (single) PBIST controller; in initialization mode
+ * each bit selects one memory for hardware auto-initialization.
+ */
+#define SYS_MSINENA_PBIST (1 << 0)
+#define SYS_MSINENA_L2RAM (1 << 0)
+
 /* Bits 0-7: Memory hardware init key */
 #define SYS_MINITGCR_MASK (0xff)
 #  define SYS_MINITGCR_ENABLE         (0x0a)
@@ -429,6 +447,44 @@
 #define SYS2_PLLCTL3_PLLMUL2_MASK      (0xffff << SYS2_PLLCTL3_PLLMUL2_SHIFT)
 #  define SYS2_PLLCTL3_PLLMUL2(n)      ((uint32_t)(n) << \
                                          SYS2_PLLCTL3_PLLMUL2_SHIFT)
+
+/* CPU Logic BIST Clock Prescaler (System Frame 2, offset 0x08).  When
+ * non-zero this overrides the per-segment dividers in the STC module's own
+ * STCCLKDIV register.
+ */
+
+/* Bits 24-26: STCCLK = GCLK1 / (n + 1) */
+#define SYS2_STCCLKDIV_CLKDIV_SHIFT (24)
+#define SYS2_STCCLKDIV_CLKDIV_MASK     (7 << SYS2_STCCLKDIV_CLKDIV_SHIFT)
+#  define SYS2_STCCLKDIV_CLKDIV(n)     ((uint32_t)(n) << \
+                                         SYS2_STCCLKDIV_CLKDIV_SHIFT)
+
+/* CPU Reset Control Register */
+
+/* Bit 0: Toggling resets the CPU only */
+#define SYS_CPURSTCR_CPURESET (1 << 0)
+
+/* System Exception Status Register (reset cause, all flags W1C).  PORST
+ * survives every reset; the others read 0 after a power-on reset and are
+ * otherwise sticky, so more than one can be set at a time.
+ *
+ * Bit 6 is "reserved" in SPNU562A Figure 2-53 yet drawn as clearable, and
+ * TI's SafeTI library treats it as a second CPU reset flag on this part,
+ * so both are covered by SYS_SYSESR_CPURST_ALL.
+ */
+
+#define SYS_SYSESR_EXTRST            (1 << 3)  /* Bit 3: External (nRST) */
+#define SYS_SYSESR_SWRST             (1 << 4)  /* Bit 4: Software reset */
+#define SYS_SYSESR_CPURST            (1 << 5)  /* Bit 5: CPU reset (STC) */
+#define SYS_SYSESR_CPURST1           (1 << 6)  /* Bit 6: See above */
+#define SYS_SYSESR_ICSTRST           (1 << 7)  /* Bit 7: Interconnect test */
+#define SYS_SYSESR_DBGRST            (1 << 11) /* Bit 11: Debugger reset */
+#define SYS_SYSESR_WDRST             (1 << 13) /* Bit 13: Watchdog reset */
+#define SYS_SYSESR_OSCRST            (1 << 14) /* Bit 14: Osc fail/PLL slip */
+#define SYS_SYSESR_PORST             (1 << 15) /* Bit 15: Power-on reset */
+
+#define SYS_SYSESR_CPURST_ALL (SYS_SYSESR_CPURST | SYS_SYSESR_CPURST1)
+#define SYS_SYSESR_ALL (0xe8f8)
 
 /* System Exception Control Register (software reset) */
 

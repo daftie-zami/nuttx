@@ -121,6 +121,8 @@
 #define RM57_ESM_LTCPR            (RM57_ESM_BASE + RM57_ESM_LTCPR_OFFSET)
 #define RM57_ESM_EKR              (RM57_ESM_BASE + RM57_ESM_EKR_OFFSET)
 #define RM57_ESM_SR1(n)           (RM57_ESM_BASE + RM57_ESM_SR1_OFFSET(n))
+#define RM57_ESM_SR2              RM57_ESM_SR1(1)
+#define RM57_ESM_SR3              RM57_ESM_SR1(2)
 #define RM57_ESM_SSR2             (RM57_ESM_BASE + RM57_ESM_SSR2_OFFSET)
 #define RM57_ESM_IEPSR4           (RM57_ESM_BASE + RM57_ESM_IEPSR4_OFFSET)
 #define RM57_ESM_IEPCR4           (RM57_ESM_BASE + RM57_ESM_IEPCR4_OFFSET)
@@ -164,6 +166,42 @@
 #define ESM_IOFF_GRP1_MID_LAST    (0x60)
 #define ESM_IOFF_GRP1_HI_FIRST    (0x81)  /* 0x81-0xa0: group1, ch 64-95 */
 #define ESM_IOFF_GRP1_HI_LAST     (0xa0)
+
+/* Error Pin Status Register */
+
+#define ESM_EPSR_EPSF             (1 << 0) /* Bit 0: 1 = nERROR pin inactive */
+
+/* Error Key Register */
+
+#define ESM_EKR_NORMAL            (0x00)  /* Normal mode */
+#define ESM_EKR_RELEASE           (0x05)  /* Release nERROR once LTC expires */
+#define ESM_EKR_FORCE             (0x0a)  /* Error forcing: drive nERROR low */
+
+/* Channel assignments used by the start-up diagnostics (SPNS215C
+ * Table 6-45).  Group1 channel n lives in SR1 (0-31), SR4 (32-63) or SR7
+ * (64-95) at bit (n % 32); group2 is SR2/SSR2 and group3 is SR3.
+ */
+
+#define ESM_G1_CPU_SELFTEST       (27)    /* Cortex-R5F LBIST (STC1) error */
+#define ESM_G1_CCM_SELFTEST       (31)    /* CCM-R5F self-test error */
+#define ESM_G1_PD_COMPARE         (38)    /* Power domain compare error */
+#define ESM_G1_PD_SELFTEST        (39)    /* Power domain self-test error */
+#define ESM_G1_EFUSE_ERROR        (40)    /* eFuse farm EFC error */
+#define ESM_G1_EFUSE_SELFTEST     (41)    /* eFuse farm self-test error */
+#define ESM_G1_INTERCONNECT       (52)    /* CPU interconnect global error */
+#define ESM_G1_N2HET_SELFTEST     (54)    /* N2HET LBIST (STC2) error */
+#define ESM_G1_CCM_STATUS         (92)    /* CCM-R5F operating status */
+
+#define ESM_G2_CCM_CPU            (2)     /* CCM-R5F CPU compare error */
+#define ESM_G2_CPU_BUSERR         (3)     /* Cortex-R5F fatal bus error */
+#define ESM_G2_L2RAMW_TYPEB       (7)     /* L2RAMW uncorrectable type B */
+#define ESM_G2_CCM_VIM            (25)    /* CCM-R5F VIM compare error */
+#define ESM_G2_CCM_INACTIVITY     (26)    /* CPU1 AXIM bus monitor failure */
+#define ESM_G2_CCM_PD             (28)    /* CCM-R5F power domain monitor */
+
+#define ESM_G3_EFUSE_AUTOLOAD     (1)     /* eFuse farm autoload error */
+
+#define ESM_CHANBIT(n)            (1 << ((n) % 32))
 
 /* Channels per status register, and the total the offset encoding spans */
 

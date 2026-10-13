@@ -106,7 +106,13 @@
 
 /* System Module - Frame 2 (systemREG2) */
 #define RM57_SYS2_BASE 0xffffe100
+#define RM57_PBIST_BASE           0xffffe400 /* PBIST controller (pbistREG) */
+#define RM57_STC1_BASE            0xffffe600 /* STC1: CPU LBIST (stcREG1) */
+#define RM57_STC2_BASE            0xffff0800 /* STC2: N2HET LBIST (stcREG2) */
+#define RM57_EFC_BASE             0xfff8c000 /* eFuse controller (efcREG) */
 #define RM57_ESM_BASE             0xfffff500 /* ESM (esmREG) */
+#define RM57_CCM_BASE             0xfffff600 /* CCM-R5F (ccmr5REG) */
+#define RM57_L2RAMW_BASE          0xfffff900 /* Level 2 RAM wrapper (l2ramwREG) */
 #define RM57_RTI1_BASE            0xfffffc00 /* RTI + DWWD (rtiREG1) */
 #define RM57_VIM_BASE             0xfffffd00 /* VIM (vimREG) */
 
