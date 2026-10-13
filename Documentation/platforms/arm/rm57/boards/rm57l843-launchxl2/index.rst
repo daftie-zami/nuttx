@@ -362,3 +362,56 @@ other direction.
    ``sensor_poll()`` handles the non-blocking case instead, which is why
    ``sensortest`` - it opens ``O_NONBLOCK`` - works. Use it, or open the node
    non-blocking yourself.
+
+selftest
+--------
+
+The ``nsh`` configuration with the start-up safety diagnostics enabled
+(``CONFIG_RM57_SELFTEST`` and its sub-options). Before the OS starts, the
+boot code runs:
+
+* a check that no ESM group 3 error survived the reset;
+* the PBIST ROM tests, preceded by the workaround for errata PBIST#4;
+* the STC self-check and the CPU logic BIST (125 intervals by default). Each
+  of the two ends in a CPU-only reset, so the boot code is entered three
+  times;
+* the four CCM-R5F diagnostics (CPU compare, VIM compare, inactivity monitor
+  and power domain monitor) in self-test, error forcing and self-test error
+  forcing mode;
+* the eFuse controller stuck-at-zero and ECC self-tests, after a power-on
+  reset only;
+* the L2RAMW ECC (single-bit and double-bit) and redundant address decode
+  diagnostics.
+
+The outcome is printed on the console before the NuttShell banner::
+
+    SELFTEST: reset cause 00008028 power-on cpu external
+    SELFTEST: ESM group3: PASS
+    SELFTEST: PBIST ROM init: PASS
+    SELFTEST: PBIST ROM: PASS
+    SELFTEST: STC self-check: PASS
+    SELFTEST: STC CPU LBIST: PASS
+    SELFTEST: CCM CPU compare: PASS
+    SELFTEST: CCM VIM compare: PASS
+    SELFTEST: CCM inactivity: PASS
+    SELFTEST: CCM power domain: PASS
+    SELFTEST: eFuse: PASS
+    SELFTEST: L2RAM ECC: PASS
+    SELFTEST: L2RAM addr decode: PASS
+
+A failing diagnostic prints ``SELFTEST FAIL: <name> step ... info ...``,
+drives nERROR active and, with ``CONFIG_RM57_SELFTEST_HALT_ON_FAIL``, stops
+there.
+
+.. note::
+
+   Several diagnostics force a real error, so the nERROR LED flashes briefly
+   on every boot. The CCM-R5F is disabled while a debugger is attached, so
+   the ROM tests, the STC and the CCM diagnostics are reported as ``skipped``
+   in a debug session.
+
+The ``CONFIG_RM57_SELFTEST_INJECT_*`` choice injects one fault per build to
+prove that the detection path works: a RAM algorithm on a ROM group, an STC
+time-out, a wrong eFuse self-test signature, a CPU compare mismatch or an
+L2RAM double-bit error. The last two are left pending and are reported at
+run time by the ESM handler as group 2 channel 2 and channel 7.
