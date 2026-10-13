@@ -29,6 +29,13 @@ CHIP_CSRCS += rm57_gioirq.c
 CHIP_CSRCS += rm57_irq.c rm57_lowputc.c rm57_serial.c rm57_esm.c
 CHIP_CSRCS += rm57_iomm.c
 
+ifeq ($(CONFIG_RM57_SELFTEST),y)
+CHIP_CSRCS += rm57_selftest.c
+ifeq ($(CONFIG_RM57_SELFTEST_PBIST_ROM),y)
+CHIP_CSRCS += rm57_errata.c
+endif
+endif
+
 CHIP_ASRCS  = rm57_coreinit.S
 
 # Configuration dependent C and assembly language files

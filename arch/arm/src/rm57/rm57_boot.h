@@ -34,17 +34,16 @@
  ****************************************************************************/
 
 /****************************************************************************
- * Name: rm57_core_init_registers
+ * Name: rm57_boot_c
  *
  * Description:
- *   Zero r0-r12 and clear SPSR in every CPU privilege mode (implemented
- *   in rm57_coreinit.S). Must be called as the very first thing in
- *   arm_boot(), before any other code, to avoid a lockstep CPU Compare
- *   Module (CCM) mismatch between RM57L843's two redundant cores.
+ *   The C part of the boot sequence.  Entered by a branch from arm_boot
+ *   (rm57_coreinit.S) once every CPU register holds a defined value, and
+ *   does not return.
  *
  ****************************************************************************/
 
-void rm57_core_init_registers(void);
+void rm57_boot_c(void);
 
 /****************************************************************************
  * Name: rm57_board_initialize

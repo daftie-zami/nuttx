@@ -160,6 +160,153 @@ config RM57_ESM_PANIC
 		that the channel report reaches the console and the system keeps
 		running.
 
+config RM57_SELFTEST
+	bool "Start-up diagnostics (CCM-R5F, STC, PBIST, eFuse, L2RAMW)"
+	default n
+	select ARMV7R_DECODEFIQ
+	---help---
+		Run the device's safety diagnostics on every boot, before the OS
+		starts, and print the outcome on the console.
+
+		Several of the diagnostics deliberately raise an ESM error to
+		prove that it would be reported, which pulses the nERROR pin low
+		for the ESM low time on each boot.
+
+		This also builds in the ESM FIQ handler (ARMV7R_DECODEFIQ), so
+		that a lockstep compare error at run time - an ESM group2,
+		non-maskable error - is reported instead of leaving FIQ asserted.
+
+if RM57_SELFTEST
+
+config RM57_SELFTEST_HALT_ON_FAIL
+	bool "Halt if a diagnostic fails"
+	default y
+	---help---
+		On a failed diagnostic, report it, drive nERROR low and stop.
+		Deselect only for bring-up: the system then carries on booting on
+		a device that has just shown itself to be faulty.
+
+config RM57_SELFTEST_CCM
+	bool "CCM-R5F self-test and error forcing"
+	default y
+	---help---
+		Self-test, self-test error forcing and error forcing of the four
+		CCM-R5F diagnostics: CPU compare, VIM compare, checker CPU
+		inactivity and power domain inactivity.  Skipped while a debugger
+		has halting debug enabled, because the CCM-R5F is then off.
+
+config RM57_SELFTEST_PBIST_ROM
+	bool "PBIST and STC ROM tests"
+	default n
+	---help---
+		Apply the errata PBIST#4/STC#30 ROM initialization workaround and
+		then check the PBIST ROM and the STC ROMs with both triple-read
+		algorithms.  Should be enabled whenever RM57_SELFTEST_STC is: on
+		revision A silicon the CPU self-test can hang without it.
+
+config RM57_SELFTEST_STC
+	bool "CPU logic BIST (STC1)"
+	default n
+	---help---
+		Run the self-test controller's signature compare self-check and
+		then the CPU LBIST on both lockstep cores.  Each of the two runs
+		ends in a CPU reset, so the boot code is entered three times.
+		Skipped while a debugger is attached.
+
+config RM57_SELFTEST_STC_INTERVALS
+	int "CPU logic BIST intervals"
+	default 125
+	range 2 125
+	depends on RM57_SELFTEST_STC
+	---help---
+		Number of STC1 segment 0 test intervals to run, starting from
+		interval 0.  All 125 give 95.5% coverage in about 2 ms at
+		STCCLK = 100 MHz; 40 give 90% in about 0.65 ms.
+
+config RM57_SELFTEST_EFUSE
+	bool "eFuse controller checks"
+	default n
+	---help---
+		Check the outcome of the eFuse autoload and run the stuck-at-zero
+		test and the ECC logic self-test.  Runs after a power-on reset
+		only.
+
+config RM57_SELFTEST_EFUSE_NO_NERROR
+	bool "eFuse stuck-at-zero test without nERROR"
+	default n
+	depends on RM57_SELFTEST_EFUSE
+	---help---
+		Use the reduced stuck-at-zero test that leaves out the autoload
+		error (ESM group3) path and therefore does not pull nERROR low.
+
+config RM57_SELFTEST_L2RAM
+	bool "L2RAMW ECC and address decode diagnostics"
+	default n
+	---help---
+		Exercise the L2RAMW's read and write SECDED blocks with one-bit
+		and two-bit errors, and its redundant address decode comparator,
+		using the module's built-in test stimulus.  No RAM is modified.
+
+config RM57_SELFTEST_FORCE_FAIL
+	int "Force a diagnostic to fail (-1 = none)"
+	default -1
+	range -1 11
+	---help---
+		Treat the diagnostic with this index (see RM57_ST_* in
+		rm57_selftest.h) as failed even though it passed.  For testing
+		the failure path only.
+
+choice
+	prompt "Fault injection"
+	default RM57_SELFTEST_INJECT_NONE
+	---help---
+		Deliberately create one real fault on every boot to show that the
+		corresponding diagnostic, and the response to it, work.  Unlike
+		RM57_SELFTEST_FORCE_FAIL this exercises the detecting hardware.
+		For testing only: the board will not boot normally.
+
+config RM57_SELFTEST_INJECT_NONE
+	bool "None"
+
+config RM57_SELFTEST_INJECT_PBIST_ALGO
+	bool "PBIST: RAM algorithm on a ROM"
+	depends on RM57_SELFTEST_PBIST_ROM
+	---help---
+		Expected: "SELFTEST FAIL: PBIST ROM step 000000f1", halt.
+
+config RM57_SELFTEST_INJECT_STC_TIMEOUT
+	bool "STC: impossible timeout on the CPU LBIST run"
+	depends on RM57_SELFTEST_STC
+	---help---
+		Expected: "SELFTEST FAIL: STC CPU LBIST step 00000002" with the
+		timeout bit (bit 2) set in the second info word, halt.
+
+config RM57_SELFTEST_INJECT_EFUSE_SIGNATURE
+	bool "eFuse: wrong ECC self-test signature"
+	depends on RM57_SELFTEST_EFUSE
+	---help---
+		Expected after a power-on reset: "SELFTEST FAIL: eFuse step
+		00000003", halt.
+
+config RM57_SELFTEST_INJECT_CCM_MISMATCH
+	bool "CCM-R5F: real CPU compare mismatch, left pending"
+	depends on RM57_SELFTEST_CCM
+	---help---
+		Inverts one of CPU1's compared signals through CCMPOLCNTRL.
+		Expected: all diagnostics pass, then the run-time ESM handler
+		reports "ESM: group 2 channel 2" and nERROR stays low.
+
+config RM57_SELFTEST_INJECT_L2RAM_2BIT
+	bool "L2RAMW: two-bit ECC error, left pending"
+	depends on RM57_SELFTEST_L2RAM
+	---help---
+		Expected: all diagnostics pass, then the run-time ESM handler
+		reports "ESM: group 2 channel 7" and nERROR stays low.
+
+endchoice # Fault injection
+
+endif # RM57_SELFTEST
+
 config RM57_SERIAL_RXDMA_BUFFER_SIZE
 	int "RX DMA buffer size"
 	default 64

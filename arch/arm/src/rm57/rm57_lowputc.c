@@ -203,6 +203,26 @@ void up_putc(int ch)
 }
 
 /****************************************************************************
+ * Name: rm57_lowflush
+ *
+ * Description:
+ *   Wait until everything written with arm_lowputc() has left the shift
+ *   register.  The serial driver resets the SCI when it takes over the
+ *   console, which would otherwise cut off the last characters.
+ *
+ ****************************************************************************/
+
+void rm57_lowflush(void)
+{
+#ifdef HAVE_SERIAL_CONSOLE
+  while ((getreg32(RM57_CONSOLE_BASE + RM57_SCI_FLR_OFFSET) &
+          SCI_FLR_TXEMPTY) == 0)
+    {
+    }
+#endif
+}
+
+/****************************************************************************
  * Name: rm57_lowsetup
  *
  * Description:

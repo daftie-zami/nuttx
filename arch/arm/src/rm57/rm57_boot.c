@@ -28,6 +28,7 @@
 
 #include <nuttx/init.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #include <arch/board/board.h>
 
@@ -43,6 +44,7 @@
 #include "rm57_iomm.h"
 #include "rm57_lowputc.h"
 #include "rm57_mpuinit.h"
+#include "rm57_selftest.h"
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -108,57 +110,106 @@ static void rm57_memory_initialize(void)
  ****************************************************************************/
 
 /****************************************************************************
- * Name: arm_boot
+ * Name: rm57_boot_c
  *
  * Description:
- *   Complete boot operations started in arm_head.S
+ *   Complete boot operations started in arm_head.S and arm_boot
  *
  * Boot Sequence
  *
  *   1.  The __start entry point in armv7-r/arm_head.S is invoked upon
- *       power-on reset and prepares the CPU for code execution.
- *   2.  Because CONFIG_ARMV7R_MEMINIT is set, this function is called
- *       *before* .bss/.data have been initialized - it must not touch
- *       any global/static data until arm_data_initialize() has run.
- *   3.  This function configures clocking, hardware-initializes SRAM
+ *       reset and prepares the CPU for code execution.
+ *   2.  It branches to arm_boot (rm57_coreinit.S), which gives every CPU
+ *       register a defined value so that the two lockstep cores cannot
+ *       disagree, and then branches here.
+ *   3.  Because CONFIG_ARMV7R_MEMINIT is set, this function runs *before*
+ *       .bss/.data have been initialized - it must not touch any
+ *       global/static data until arm_data_initialize() has run.
+ *   4.  This function configures clocking, hardware-initializes SRAM
  *       (clearing ECC), then calls arm_data_initialize().
- *   4.  Only after that can the MPU and board-specific bring-up run.
- *   5.  This function then branches to nx_start() to start the OS.
+ *   5.  Only after that can the MPU and board-specific bring-up run.
+ *   6.  This function then branches to nx_start() to start the OS.
  *
- * NOTE: unlike the sibling tms570_boot.c, this function does not perform
- * PBIST/self-test - that is not yet implemented for RM57.
+ * CPU Reset
+ *
+ *   The CPU self-test (STC) ends in a reset of the CPU alone, and software
+ *   can cause one through CPURSTCR.  Everything outside the CPU keeps its
+ *   state across such a reset: the PLLs stay locked and remain the clock
+ *   source, the peripherals stay configured and SRAM keeps its contents.
+ *   The clock and memory set-up must then be skipped - rm57_clockconfig()
+ *   would try to switch off the very PLL the device is running from.
+ *
+ *   With CONFIG_RM57_SELFTEST the CPU self-test is part of every boot, so
+ *   a normal boot passes through here three times: once to start the STC
+ *   self-check, once to start the real run, and once to carry on.  See
+ *   rm57_selftest.c.
  *
  ****************************************************************************/
 
-void arm_boot(void)
+void rm57_boot_c(void)
 {
-  /* Zero r0-r12/SPSR in every CPU mode first, before anything else, to
-   * avoid a lockstep CPU Compare Module (CCM) mismatch between
-   * RM57L843's two redundant cores (see rm57_coreinit.S).
-   */
-
-  rm57_core_init_registers();
+#ifdef CONFIG_RM57_SELFTEST
+  uint32_t sysesr;
+  uint32_t results;
+  bool cpureset;
+#endif
 
   /* Enable CPU Event Export */
 
   rm57_event_export();
 
-  /* Initialize clocking (PLL, peripheral clocks, flash wait-states) */
-
-  rm57_clockconfig();
-
-  rm57_iomm_initialize();
-
-  /* Put the Error Signaling Module into a known, quiet state (all
-   * error-pin channels/interrupts disabled, all latched flags
-   * cleared, nERROR pin released).
+  /* Find out why we are here.  The CPU reset flag is sticky, so it alone
+   * is not proof that the last reset was CPU-only: a system reset in the
+   * meantime would have put the clock tree back on the oscillator.  Only
+   * trust it while the PLL is still selected.
    */
 
-  rm57_esm_initialize();
+  if ((getreg32(RM57_SYS_SYSESR) & SYS_SYSESR_CPURST_ALL) != 0 &&
+      (getreg32(RM57_SYS_GHVSRC) & SYS_GHVSRC_GHVSRC_MASK) ==
+      SYS_GHVSRC_GHVSRC_SRC(SYS_CLKSRC_PLL1))
+    {
+      putreg32(SYS_SYSESR_CPURST_ALL, RM57_SYS_SYSESR);
 
-  /* Hardware-initialize (ECC-clear) SRAM before .bss/.data are touched */
+#ifdef CONFIG_RM57_SELFTEST
+      sysesr   = getreg32(RM57_SYS_SYSESR) | SYS_SYSESR_CPURST;
+      cpureset = true;
+#endif
+    }
+  else
+    {
+      /* Initialize clocking (PLL, peripheral clocks, flash wait-states) */
 
-  rm57_memory_initialize();
+      rm57_clockconfig();
+
+      rm57_iomm_initialize();
+
+      /* Put the Error Signaling Module into a known, quiet state (all
+       * error-pin channels/interrupts disabled, nERROR pin released).
+       */
+
+      rm57_esm_initialize();
+
+      /* Hardware-initialize (ECC-clear) SRAM before .bss/.data are
+       * touched.  This wipes the stack as well, so nothing this function
+       * needs later may be held in a local variable across the call -
+       * hence the reset cause is only read afterwards.
+       */
+
+      rm57_memory_initialize();
+
+#ifdef CONFIG_RM57_SELFTEST
+      sysesr   = getreg32(RM57_SYS_SYSESR);
+      cpureset = false;
+#endif
+    }
+
+#ifdef CONFIG_RM57_SELFTEST
+  /* ROM tests and CPU self-test.  Does not return on the passes that end
+   * in a CPU reset.
+   */
+
+  results = rm57_selftest_early(sysesr, cpureset);
+#endif
 
   /* Initialize the FPU (RM57L843 is Cortex-R5F) */
 
@@ -167,6 +218,14 @@ void arm_boot(void)
   /* Initialize .bss and .data now that SRAM has been initialized */
 
   arm_data_initialize();
+
+#ifdef CONFIG_RM57_SELFTEST
+  /* The remaining diagnostics, which need nothing from RAM beyond what
+   * is now valid: CCM-R5F, eFuse controller, L2RAMW.
+   */
+
+  rm57_selftest_late(sysesr, results);
+#endif
 
   /* Configure the MPU regions (flash, SRAM, peripherals) */
 
@@ -197,6 +256,10 @@ void arm_boot(void)
    */
 
   rm57_lowsetup();
+
+#ifdef CONFIG_RM57_SELFTEST
+  rm57_selftest_report();
+#endif
 
   /* Then start NuttX */
 

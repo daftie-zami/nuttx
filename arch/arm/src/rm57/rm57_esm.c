@@ -76,7 +76,15 @@ void rm57_esm_initialize(void)
   putreg32(0xffffffff, RM57_ESM_SR1(0));
   putreg32(0xffffffff, RM57_ESM_SR1(1));
   putreg32(0xffffffff, RM57_ESM_SSR2);
+
+#ifndef CONFIG_RM57_SELFTEST
   putreg32(0xffffffff, RM57_ESM_SR1(2));
+#else
+  /* Group3 flags left by the reset sequence (eFuse autoload, implicit
+   * flash OTP reads) are evidence: rm57_selftest_early() examines and
+   * clears them.
+   */
+#endif
 
   putreg32(0xffffffff, RM57_ESM_SR4(0));
   putreg32(0xffffffff, RM57_ESM_SR7(0));
@@ -144,7 +152,8 @@ int rm57_esm_interrupt(int irq, void *context, void *arg)
    * group1 flag we fail to clear below would otherwise keep it alive.
    */
 
-  while ((offset = getreg32(RM57_ESM_IOFFHR) & ESM_IOFF_MASK) != ESM_IOFF_NONE)
+  while ((offset = getreg32(RM57_ESM_IOFFHR) & ESM_IOFF_MASK) !=
+         ESM_IOFF_NONE)
     {
       if (guard-- == 0)
         {

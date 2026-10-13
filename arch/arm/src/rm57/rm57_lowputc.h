@@ -52,7 +52,7 @@ struct sci_config_s
                                   * instead of 1 */
   bool     loopback;            /* true: Tie TX to RX inside the module
                                   * (SCIGCR1.LOOPBACK, TRM 29.4 "self
-                                  * test")*/
+                                  * test") */
 };
 
 /****************************************************************************
@@ -82,6 +82,17 @@ extern "C"
  ****************************************************************************/
 
 void rm57_lowsetup(void);
+
+/****************************************************************************
+ * Name: rm57_lowflush
+ *
+ * Description:
+ *   Wait until the console transmitter has sent everything written with
+ *   arm_lowputc().
+ *
+ ****************************************************************************/
+
+void rm57_lowflush(void);
 
 /****************************************************************************
  * Name: rm57_sci_configure

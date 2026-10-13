@@ -33,6 +33,13 @@ set(SRCS
     rm57_iomm.c
     rm57_coreinit.S)
 
+if(CONFIG_RM57_SELFTEST)
+  list(APPEND SRCS rm57_selftest.c)
+  if(CONFIG_RM57_SELFTEST_PBIST_ROM)
+    list(APPEND SRCS rm57_errata.c)
+  endif()
+endif()
+
 if(NOT CONFIG_SCHED_TICKLESS)
   list(APPEND SRCS rm57_timerisr.c)
 endif()
