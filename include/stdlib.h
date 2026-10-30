@@ -182,7 +182,7 @@ int       getloadavg(FAR double loadavg[], int nelem);
 FAR char ***get_environ_ptr(void);
 FAR char *getenv(FAR const char *name);
 FAR char *secure_getenv(FAR const char *name);
-int       putenv(FAR const char *string);
+int       putenv(FAR char *string);
 int       clearenv(void);
 int       setenv(FAR const char *name, FAR const char *value, int overwrite);
 int       unsetenv(FAR const char *name);
